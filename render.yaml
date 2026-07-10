@@ -23,3 +23,7 @@ services:
         sync: false
       - key: LEAKLINE_ENCRYPTION_KEY
         sync: false
+      - key: LEAKLINE_INVITE_CODE
+        sync: false
+      - key: SESSION_DAYS
+        value: 30

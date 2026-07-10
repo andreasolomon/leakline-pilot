@@ -56,6 +56,8 @@ export type StoreState = {
   workspace: IntegrationWorkspace
   calls: CallRecord[]
   oauthStates: Partial<Record<ProviderId, { value: string; expiresAt: number }>>
+  users: UserRecord[]
+  sessions: SessionRecord[]
 }
 
 export type ProviderStatus = {
@@ -71,4 +73,21 @@ export type ProviderStatus = {
   lastError?: string
   accountLabel?: string
   recordCounts: RecordCounts
+}
+
+export type UserRecord = {
+  id: string
+  name: string
+  email: string
+  passwordHash: string
+  passwordSalt: string
+  createdAt: string
+  lastLoginAt?: string
+}
+
+export type SessionRecord = {
+  idHash: string
+  userId: string
+  createdAt: string
+  expiresAt: number
 }

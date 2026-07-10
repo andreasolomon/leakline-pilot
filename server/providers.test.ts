@@ -2,13 +2,19 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import request from 'supertest'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from './app.js'
 import { syncFathom, syncGoogleCalendar, syncHighLevel, syncStripe } from './providers.js'
 import { EncryptedStore } from './store.js'
 import { safeErrorMessage } from './safety.js'
 
 const reply = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } })
+
+afterEach(() => {
+  delete process.env.LEAKLINE_AUTH_ENABLED
+  delete process.env.LEAKLINE_INVITE_CODE
+  delete process.env.ALLOW_ADDITIONAL_USERS
+})
 
 describe('Version 2 provider adapters', () => {
   it('normalizes Stripe payments, failures, refunds and overdue invoices', async () => {
@@ -60,6 +66,32 @@ describe('Version 2 provider adapters', () => {
 })
 
 describe('Version 2 service boundary', () => {
+  it('protects pilot data behind invite-only login when auth is enabled', async () => {
+    process.env.LEAKLINE_AUTH_ENABLED = 'true'
+    process.env.LEAKLINE_INVITE_CODE = 'pilot-secret'
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-auth-'))
+    try {
+      const app = createApp(new EncryptedStore(directory))
+      expect((await request(app).get('/api/health')).status).toBe(200)
+      expect((await request(app).get('/api/integrations')).status).toBe(401)
+
+      const agent = request.agent(app)
+      const rejected = await agent.post('/api/auth/signup').send({ name: 'Client', email: 'client@example.com', password: 'secure-pass-123', inviteCode: 'wrong' })
+      expect(rejected.status).toBe(400)
+
+      const created = await agent.post('/api/auth/signup').send({ name: 'Client', email: 'client@example.com', password: 'secure-pass-123', inviteCode: 'pilot-secret' })
+      expect(created.status).toBe(201)
+      expect(created.body.user).toMatchObject({ email: 'client@example.com', name: 'Client' })
+
+      const integrations = await agent.get('/api/integrations')
+      expect(integrations.status).toBe(200)
+      expect(integrations.body.statuses).toHaveLength(4)
+
+      await agent.post('/api/auth/logout').send({})
+      expect((await agent.get('/api/integrations')).status).toBe(401)
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  })
+
   it('encrypts integration state at rest', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'leakline-store-'))
     try {

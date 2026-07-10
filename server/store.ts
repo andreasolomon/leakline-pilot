@@ -3,7 +3,7 @@ import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto'
 import { join } from 'node:path'
 import type { StoreState } from './types.js'
 
-const emptyState = (): StoreState => ({ credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, calls: [], oauthStates: {} })
+const emptyState = (): StoreState => ({ credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, calls: [], oauthStates: {}, users: [], sessions: [] })
 
 export class EncryptedStore {
   private readonly directory: string

@@ -59,13 +59,15 @@ This repository includes `render.yaml` for a Render Blueprint:
 - Persistent disk: `/var/data`
 - Leakline data directory: `/var/data/leakline`
 
-Before exposing the URL to a client, add an authentication layer. The current deployment prep makes the app hostable, but the app is not yet client-login protected.
+The hosted pilot includes invite-only authentication. The first client creates their own login with the invite code you set in Render. By default, signup closes after the first account is created so the public URL does not become open registration.
 
 Required Render environment values:
 
 ```bash
 APP_BASE_URL=https://your-render-service.onrender.com
 LEAKLINE_ENCRYPTION_KEY=<64-character-hex-key>
+LEAKLINE_INVITE_CODE=<private-code-you-send-to-the-client>
+SESSION_DAYS=30
 ```
 
 Generate a local encryption key with:
@@ -134,13 +136,13 @@ Sandbox mode is useful for product testing, but it is not a substitute for final
 ## Security model
 
 - Secrets never enter browser storage.
+- The public app is protected by HTTP-only session cookies and invite-only account creation.
+- The first pilot account is the only self-signup account unless `ALLOW_ADDITIONAL_USERS=true` is set.
 - Integration state is encrypted with AES-256-GCM.
 - Set a stable 64-character hexadecimal `LEAKLINE_ENCRYPTION_KEY` in deployed environments.
 - Without a configured key, Leakline generates a local key in `.data/local.key` with owner-only permissions.
 - Google OAuth uses a short-lived state value and read-only scope.
 - `.env`, `.data`, build outputs and dependencies are ignored by Git.
-
-This local build has no user-authentication layer. Put it behind authenticated infrastructure before exposing it to the public internet.
 
 ## Verification
 

@@ -30,6 +30,7 @@ import IntegrationPage from './IntegrationPage'
 import CallsPage from './CallsPage'
 import { datasetConfig, generateImportLeaks, mergeIntegrationWorkspace, type ImportWorkspace } from './csvEngine'
 import type { IntegrationSnapshot, ProviderStatus } from './integrationTypes'
+import type { AuthUser } from './AuthGate'
 
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 const workspaceStorageKey = 'leakline-v1-workspace'
@@ -97,6 +98,7 @@ export function importedFunnel(workspace: ImportWorkspace): FunnelStage[] {
 type RevenueTrendPoint = { day: string; retained: number; leaked: number; lost: number }
 type CloserHealthRow = { name: string; initials: string; calls: number; closeRate: number; collected: number; retained?: number; trend?: number; color: string }
 type RecoveryItem = { prospect: string; value: number; reason: string; inactive: number; owner: string; priority: string }
+type AppProps = { user: AuthUser; onLogout: () => void }
 
 const textValue = (value: unknown) => String(value ?? '').trim().toLowerCase()
 const numberValue = (value: unknown) => typeof value === 'number' ? value : 0
@@ -514,7 +516,12 @@ function SectionPage({ section, onOpenLeak, alertData = leaks, workspace = {}, f
   </section>
 }
 
-export default function App() {
+function initials(value: string) {
+  const parts = value.trim().split(/\s+/).filter(Boolean)
+  return (parts.length > 1 ? `${parts[0][0]}${parts[1][0]}` : value.slice(0, 2)).toUpperCase()
+}
+
+export default function App({ user, onLogout }: AppProps) {
   const [activeNav, setActiveNav] = useState('Overview')
   const [period, setPeriod] = useState<Period>('This month')
   const [selectedLeak, setSelectedLeak] = useState<Leak | null>(null)
@@ -778,7 +785,7 @@ export default function App() {
         </nav>
         <div className="sidebar-bottom">
           <button className={activeNav === 'Settings' ? 'active' : ''} onClick={() => setActiveNav('Settings')}><Settings size={18} /><span>Settings</span></button>
-          <div className="profile"><span>MC</span><div><strong>Maya Chen</strong><small>Sales manager</small></div><ChevronDown size={15} /></div>
+          <button className="profile" onClick={onLogout} title="Sign out of Leakline"><span>{initials(user.name || user.email)}</span><div><strong>{user.name || user.email}</strong><small>{user.email}</small></div><ChevronDown size={15} /></button>
         </div>
       </aside>
 
