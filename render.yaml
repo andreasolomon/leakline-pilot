@@ -4,7 +4,7 @@ services:
     name: leakline-pilot
     region: frankfurt
     plan: starter
-    buildCommand: npm ci && npm run build
+    buildCommand: npm ci --include=dev && npm run build && npm prune --omit=dev
     startCommand: npm start
     healthCheckPath: /api/health
     autoDeployTrigger: off

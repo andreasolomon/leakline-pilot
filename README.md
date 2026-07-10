@@ -53,7 +53,7 @@ This repository includes `render.yaml` for a Render Blueprint:
 
 - Runtime: Node web service
 - Region: Frankfurt
-- Build command: `npm ci && npm run build`
+- Build command: `npm ci --include=dev && npm run build && npm prune --omit=dev`
 - Start command: `npm start`
 - Health check: `/api/health`
 - Persistent disk: `/var/data`
