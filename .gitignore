@@ -1,0 +1,15 @@
+node_modules/
+dist/
+server-dist/
+.data/
+.env
+*.tsbuildinfo
+.DS_Store
+
+# Local/client artifacts - do not push real pilot data or generated deliverables.
+client-data/
+deliverables/
+output/
+outputs/
+tmp/
+*.xlsx

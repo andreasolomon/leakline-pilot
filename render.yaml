@@ -1,0 +1,25 @@
+services:
+  - type: web
+    runtime: node
+    name: leakline-pilot
+    region: frankfurt
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeployTrigger: off
+    disk:
+      name: leakline-data
+      mountPath: /var/data
+      sizeGB: 5
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: LEAKLINE_DATA_DIR
+        value: /var/data/leakline
+      - key: AUTO_SYNC_MINUTES
+        value: 15
+      - key: APP_BASE_URL
+        sync: false
+      - key: LEAKLINE_ENCRYPTION_KEY
+        sync: false

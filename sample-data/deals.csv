@@ -1,0 +1,16 @@
+opportunity_id,contact_id,opportunity_name,pipeline_stage,deal_value,closer,last_activity,next_step
+D001,L001,Daniel Woods - Scale Accelerator,proposal,12000,Alex Morgan,2026-06-28,
+D002,L002,Elena Brooks - Scale Accelerator,proposal,8500,Sam Rivera,2026-06-29,
+D003,L003,Marcus Hall - Operator Intensive,qualified,6000,Jordan Lee,2026-06-30,
+D004,L004,Naomi Clarke - Operator Intensive,agreement sent,5000,Priya Shah,2026-06-30,
+D005,L005,Avery Cole - Scale Accelerator,qualified,10000,Alex Morgan,2026-06-30,Follow up scheduled 2026-07-09
+D006,L006,Morgan Price - Scale Accelerator,closed won,12000,Sam Rivera,2026-06-25,Onboarding complete
+D007,L007,Riley Ford - Operator Intensive,closed won,6000,Jordan Lee,2026-06-26,Onboarding complete
+D008,L008,Casey North - Scale Accelerator,closed won,8000,Priya Shah,2026-06-29,Onboarding complete
+D009,L009,Leo Carter - Scale Accelerator,closed lost,9000,Theo Grant,2026-06-27,
+D010,L010,Nina Patel - Operator Intensive,proposal,7500,Theo Grant,2026-06-30,
+D011,L011,Maya Brown - Elite Mentorship,qualified,14000,Alex Morgan,2026-06-30,Decision call booked
+D012,L012,Owen Reed - Operator Intensive,qualified,4500,Sam Rivera,2026-06-30,
+D013,L013,Tara Singh - Elite Mentorship,sales qualified,11000,Theo Grant,2026-06-27,
+D014,L014,Grace Kim - Scale Accelerator,proposal,9500,Jordan Lee,2026-06-30,Send revised agreement
+D015,L015,Ethan Ward - Operator Intensive,lost,7000,Priya Shah,2026-06-28,

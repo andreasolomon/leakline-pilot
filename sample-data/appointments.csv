@@ -1,0 +1,19 @@
+appointment_id,lead_id,contact_email,appointment_date,attendance_status,campaign,host
+A001,L001,daniel.woods@example.com,2026-06-23 10:00,attended,Meta Campaign B,Alex Morgan
+A002,L002,elena.brooks@example.com,2026-06-23 12:00,no_show,Webinar,Sam Rivera
+A003,L003,marcus.hall@example.com,2026-06-24 09:30,no_show,Meta Campaign B,Jordan Lee
+A004,L004,naomi.clarke@example.com,2026-06-24 11:30,attended,Referral,Priya Shah
+A005,L005,avery.cole@example.com,2026-06-24 14:00,missed,YouTube Organic,Alex Morgan
+A006,L006,morgan.price@example.com,2026-06-25 10:00,attended,Webinar,Sam Rivera
+A007,L007,riley.ford@example.com,2026-06-25 13:00,attended,Referral,Jordan Lee
+A008,L008,casey.north@example.com,2026-06-26 09:00,showed,YouTube Organic,Priya Shah
+A009,L009,leo.carter@example.com,2026-06-26 11:00,no_show,Meta Campaign B,Theo Grant
+A010,L010,nina.patel@example.com,2026-06-26 15:00,no_show,Instagram,Theo Grant
+A011,L011,maya.brown@example.com,2026-06-29 10:30,completed,YouTube Organic,Alex Morgan
+A012,L012,owen.reed@example.com,2026-06-29 12:30,missed,Webinar,Sam Rivera
+A013,L013,tara.singh@example.com,2026-06-30 09:30,no_show,Meta Campaign B,Theo Grant
+A014,L014,grace.kim@example.com,2026-06-30 11:30,attended,Referral,Jordan Lee
+A015,L015,ethan.ward@example.com,2026-06-30 10:00,no_show,Partner,Priya Shah
+A016,L016,sofia.ramirez@example.com,2026-06-30 13:00,attended,YouTube Organic,Alex Morgan
+A017,L017,luca.bennett@example.com,2026-06-30 15:00,missed,Meta Campaign B,Sam Rivera
+A018,L018,harper.stone@example.com,2026-06-30 16:30,no_show,Instagram,Jordan Lee

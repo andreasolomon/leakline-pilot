@@ -1,0 +1,906 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prospect Tracker</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #132833;
+      --muted: #6b7d86;
+      --line: #d8e2e6;
+      --panel: #ffffff;
+      --soft: #edf4f6;
+      --green: #087a59;
+      --green-soft: #ddf3ea;
+      --amber: #a96718;
+      --amber-soft: #fff1dc;
+      --red: #b9473c;
+      --red-soft: #fbe3df;
+      --blue: #235f7d;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #edf4f6;
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button, input, select, textarea {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .shell {
+      width: min(1420px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 24px 0;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 0 0 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .title-block {
+      min-width: 0;
+    }
+
+    .eyebrow {
+      margin: 0 0 5px;
+      color: var(--blue);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      color: #092536;
+      font-size: 30px;
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+
+    .stats {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .stat {
+      min-width: 94px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      text-align: right;
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .stat span {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .8px;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: minmax(240px, 1fr) auto auto;
+      gap: 8px;
+      margin: 18px 0 12px;
+    }
+
+    .search {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--ink);
+      padding: 0 12px;
+      outline: none;
+    }
+
+    .search:focus, input:focus, select:focus, textarea:focus {
+      border-color: #88b3c3;
+      box-shadow: 0 0 0 3px #a9cfdb4a;
+    }
+
+    .button {
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+      color: #24414f;
+      padding: 0 13px;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .button.primary {
+      border-color: #092b3c;
+      background: #092b3c;
+      color: white;
+    }
+
+    .button.danger {
+      color: var(--red);
+    }
+
+    .process-strip {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      margin: 0 0 12px;
+    }
+
+    .process-step {
+      min-height: 78px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 10px;
+    }
+
+    .process-step span {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: var(--soft);
+      color: #315363;
+      font-size: 10px;
+      font-weight: 900;
+    }
+
+    .process-step strong {
+      display: block;
+      margin: 7px 0 3px;
+      color: #102b3b;
+      font-size: 12px;
+    }
+
+    .process-step small {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+    }
+
+    .tracker {
+      display: grid;
+      grid-template-columns: 360px minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+    }
+
+    .entry, .table-wrap {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      box-shadow: 0 6px 20px #0925360a;
+    }
+
+    .entry {
+      padding: 16px;
+      position: sticky;
+      top: 16px;
+    }
+
+    .entry-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 13px;
+    }
+
+    .entry-head h2 {
+      margin: 0;
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+
+    .entry-head button {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 800;
+      padding: 4px;
+    }
+
+    form {
+      display: grid;
+      gap: 10px;
+    }
+
+    label {
+      display: grid;
+      gap: 5px;
+      color: #4f6671;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fbfdfe;
+      color: var(--ink);
+      padding: 9px 10px;
+      outline: none;
+    }
+
+    textarea {
+      min-height: 70px;
+      resize: vertical;
+      line-height: 1.4;
+    }
+
+    .two {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .check-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fbfdfe;
+      padding: 0 10px;
+      color: #4f6671;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .check-row input {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--green);
+    }
+
+    .form-actions {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .table-wrap {
+      overflow: hidden;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    th, td {
+      border-bottom: 1px solid #e3eaee;
+      padding: 11px 10px;
+      text-align: left;
+      vertical-align: top;
+      font-size: 12px;
+    }
+
+    th {
+      background: #f6fafb;
+      color: #627984;
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: .8px;
+      text-transform: uppercase;
+    }
+
+    tr:hover td {
+      background: #f9fcfd;
+    }
+
+    .name-cell strong {
+      display: block;
+      margin-bottom: 3px;
+      color: #102b3b;
+      font-size: 13px;
+    }
+
+    .name-cell span, .muted {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      border-radius: 999px;
+      padding: 0 8px;
+      font-size: 10px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .pill.strong { background: var(--green-soft); color: var(--green); }
+    .pill.medium { background: #e7eff2; color: #315363; }
+    .pill.low { background: var(--amber-soft); color: var(--amber); }
+    .pill.booked { background: var(--green-soft); color: var(--green); }
+    .pill.open { background: var(--red-soft); color: var(--red); }
+    .pill.due { background: var(--amber-soft); color: var(--amber); }
+    .pill.done { background: #e7eff2; color: #315363; }
+
+    .date-stack {
+      display: grid;
+      gap: 5px;
+      color: #304a56;
+      font-size: 11px;
+    }
+
+    .response-cell, .step-cell, .process-cell {
+      color: #294552;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+
+    .process-cell {
+      display: grid;
+      gap: 7px;
+    }
+
+    .process-top {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .process-prompt {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .row-actions {
+      display: flex;
+      gap: 6px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .icon-btn {
+      min-width: 50px;
+      height: 31px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      color: #335361;
+      font-weight: 900;
+      padding: 0 8px;
+    }
+
+    .empty {
+      min-height: 240px;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      text-align: center;
+      padding: 24px;
+      font-size: 13px;
+    }
+
+    .empty strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--ink);
+      font-size: 15px;
+    }
+
+    @media (max-width: 1100px) {
+      .tracker {
+        grid-template-columns: 1fr;
+      }
+
+      .entry {
+        position: static;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .shell {
+        width: min(100vw - 18px, 1420px);
+        padding: 14px 0;
+      }
+
+      header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .stats {
+        width: 100%;
+        justify-content: stretch;
+      }
+
+      .stat {
+        flex: 1;
+        text-align: left;
+      }
+
+      .controls {
+        grid-template-columns: 1fr;
+      }
+
+      .two {
+        grid-template-columns: 1fr;
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+      }
+
+      table {
+        min-width: 1180px;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .process-strip {
+        grid-template-columns: 1fr;
+      }
+
+      .process-step {
+        min-height: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div class="title-block">
+        <p class="eyebrow">Outbound</p>
+        <h1>Prospect Tracker</h1>
+      </div>
+      <div class="stats" aria-live="polite">
+        <div class="stat"><strong id="totalCount">0</strong><span>People</span></div>
+        <div class="stat"><strong id="followUpCount">0</strong><span>Follow-ups</span></div>
+        <div class="stat"><strong id="bookedCount">0</strong><span>Booked</span></div>
+      </div>
+    </header>
+
+    <div class="controls">
+      <input class="search" id="searchInput" type="search" placeholder="Search name, offer, pain, response, or next step">
+      <button class="button" id="exportButton" type="button">Export CSV</button>
+      <button class="button danger" id="clearButton" type="button">Clear</button>
+    </div>
+
+    <section class="process-strip" aria-label="Follow-up process">
+      <div class="process-step"><span>1</span><strong>Send the demo ask</strong><small>Personal, casual, no pitch.</small></div>
+      <div class="process-step"><span>2</span><strong>Soft check-in</strong><small>2 days later: make it easy to ignore.</small></div>
+      <div class="process-step"><span>3</span><strong>Useful angle</strong><small>4 days later: tie it to their likely pain.</small></div>
+      <div class="process-step"><span>4</span><strong>Easy out</strong><small>7 days later: no pressure either way.</small></div>
+      <div class="process-step"><span>5</span><strong>Leave it there</strong><small>Only for strong relationships.</small></div>
+    </section>
+
+    <section class="tracker" aria-label="Prospect tracker">
+      <aside class="entry">
+        <div class="entry-head">
+          <h2 id="formTitle">Add person</h2>
+          <button id="resetButton" type="button" title="Reset form">Reset</button>
+        </div>
+
+        <form id="prospectForm">
+          <input id="prospectId" type="hidden">
+          <label>Name
+            <input id="name" autocomplete="off" required>
+          </label>
+          <label>Offer/business
+            <input id="business" autocomplete="off" required>
+          </label>
+          <div class="two">
+            <label>Relationship strength
+              <select id="relationship">
+                <option>Strong</option>
+                <option selected>Medium</option>
+                <option>Low</option>
+              </select>
+            </label>
+            <label>Likely pain
+              <select id="pain">
+                <option>Refunds</option>
+                <option>Failed payments</option>
+                <option>No-shows</option>
+                <option>Follow-up</option>
+                <option>Closer performance</option>
+              </select>
+            </label>
+          </div>
+          <div class="two">
+            <label>Message sent date
+              <input id="messageDate" type="date">
+            </label>
+            <label>Follow-up date
+              <input id="followUpDate" type="date">
+            </label>
+          </div>
+          <label>Touch points sent
+            <select id="touchCount">
+              <option value="0">0</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+            </select>
+          </label>
+          <label>Response
+            <textarea id="response"></textarea>
+          </label>
+          <label class="check-row">Call booked
+            <input id="callBooked" type="checkbox">
+          </label>
+          <label>Next step
+            <textarea id="nextStep"></textarea>
+          </label>
+          <div class="form-actions">
+            <button class="button primary" type="submit">Save person</button>
+            <button class="button" id="deleteButton" type="button" hidden>Delete</button>
+          </div>
+        </form>
+      </aside>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 14%">Person</th>
+              <th style="width: 9%">Relationship</th>
+              <th style="width: 10%">Likely pain</th>
+              <th style="width: 18%">Follow-up process</th>
+              <th style="width: 13%">Dates</th>
+              <th style="width: 13%">Response</th>
+              <th style="width: 7%">Call</th>
+              <th style="width: 9%">Next step</th>
+              <th style="width: 7%"></th>
+            </tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+        <div class="empty" id="emptyState">
+          <div>
+            <strong>No prospects yet</strong>
+            Add the first person and the tracker will save in this browser.
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const storageKey = 'simple-prospect-tracker-v1'
+    const fields = ['name', 'business', 'relationship', 'pain', 'messageDate', 'followUpDate', 'touchCount', 'response', 'callBooked', 'nextStep']
+    const followUpPlan = [
+      { label: 'Send the demo ask', delay: 0, prompt: 'Quick one, I built a small demo and thought of you. Want me to show you?' },
+      { label: 'Soft check-in', delay: 2, prompt: 'Just checking this did not get buried. No pressure either way.' },
+      { label: 'Useful angle', delay: 4, prompt: 'Thought this might be useful with the {pain} side of the business.' },
+      { label: 'Easy out', delay: 7, prompt: 'All good if now is not the time. I can leave it there.' },
+      { label: 'Leave it there', delay: 14, prompt: 'Last one from me on this. If it is useful later, just shout.' },
+    ]
+    const form = document.getElementById('prospectForm')
+    const tableBody = document.getElementById('tableBody')
+    const emptyState = document.getElementById('emptyState')
+    const searchInput = document.getElementById('searchInput')
+    const prospectId = document.getElementById('prospectId')
+    const formTitle = document.getElementById('formTitle')
+    const deleteButton = document.getElementById('deleteButton')
+    const resetButton = document.getElementById('resetButton')
+    const exportButton = document.getElementById('exportButton')
+    const clearButton = document.getElementById('clearButton')
+    const totalCount = document.getElementById('totalCount')
+    const followUpCount = document.getElementById('followUpCount')
+    const bookedCount = document.getElementById('bookedCount')
+
+    let prospects = load()
+
+    function load() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(storageKey) || '[]')
+        return Array.isArray(saved) ? saved : []
+      } catch {
+        return []
+      }
+    }
+
+    function save() {
+      localStorage.setItem(storageKey, JSON.stringify(prospects))
+    }
+
+    function todayIso() {
+      return new Date().toISOString().slice(0, 10)
+    }
+
+    function addDaysIso(value, days) {
+      const date = value ? new Date(value + 'T00:00:00') : new Date()
+      if (Number.isNaN(date.getTime())) return ''
+      date.setDate(date.getDate() + days)
+      return date.toISOString().slice(0, 10)
+    }
+
+    function isDue(value) {
+      return value && value <= todayIso()
+    }
+
+    function escapeHtml(value) {
+      return String(value || '').replace(/[&<>"']/g, (character) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;',
+      }[character]))
+    }
+
+    function formatDate(value) {
+      if (!value) return 'Not set'
+      const date = new Date(value + 'T00:00:00')
+      return Number.isNaN(date.getTime()) ? 'Not set' : new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }).format(date)
+    }
+
+    function relationshipClass(value) {
+      return String(value || '').toLowerCase()
+    }
+
+    function maxTouches(relationship) {
+      if (relationship === 'Strong') return 5
+      if (relationship === 'Low') return 3
+      return 4
+    }
+
+    function touchCount(prospect) {
+      const saved = Number(prospect.touchCount)
+      if (Number.isFinite(saved)) return Math.max(0, Math.min(maxTouches(prospect.relationship), saved))
+      return prospect.messageDate ? 1 : 0
+    }
+
+    function nextTouchPlan(prospect) {
+      const count = touchCount(prospect)
+      const max = maxTouches(prospect.relationship)
+      if (count >= max) return null
+      return followUpPlan[count]
+    }
+
+    function suggestedFollowUpDate(messageDate, count) {
+      const plan = followUpPlan[count]
+      if (!messageDate || !plan) return ''
+      return addDaysIso(messageDate, plan.delay)
+    }
+
+    function followUpStatus(prospect) {
+      if (prospect.callBooked) return { label: 'Booked', className: 'booked' }
+      if (touchCount(prospect) >= maxTouches(prospect.relationship)) return { label: 'Leave it', className: 'done' }
+      if (isDue(prospect.followUpDate)) return { label: 'Due', className: 'due' }
+      if (prospect.followUpDate) return { label: 'Scheduled', className: 'medium' }
+      return { label: 'Not started', className: 'open' }
+    }
+
+    function friendlyPrompt(prospect) {
+      const plan = nextTouchPlan(prospect)
+      if (!plan) return 'Done for now. If they circle back, pick it up naturally.'
+      return plan.prompt.replace('{pain}', String(prospect.pain || 'revenue leak').toLowerCase())
+    }
+
+    function currentRows() {
+      const term = searchInput.value.trim().toLowerCase()
+      if (!term) return prospects
+      return prospects.filter((prospect) => fields.some((field) => String(prospect[field] || '').toLowerCase().includes(term)))
+    }
+
+    function render() {
+      const rows = currentRows()
+      totalCount.textContent = prospects.length
+      followUpCount.textContent = prospects.filter((prospect) => isDue(prospect.followUpDate) && !prospect.callBooked).length
+      bookedCount.textContent = prospects.filter((prospect) => prospect.callBooked).length
+      emptyState.hidden = rows.length > 0
+      tableBody.innerHTML = rows.map((prospect) => {
+        const count = touchCount(prospect)
+        const max = maxTouches(prospect.relationship)
+        const status = followUpStatus(prospect)
+        const nextPlan = nextTouchPlan(prospect)
+        const canAdvance = !prospect.callBooked && count < max
+        return `
+          <tr>
+            <td class="name-cell">
+              <strong>${escapeHtml(prospect.name)}</strong>
+              <span>${escapeHtml(prospect.business)}</span>
+            </td>
+            <td><span class="pill ${relationshipClass(prospect.relationship)}">${escapeHtml(prospect.relationship)}</span></td>
+            <td>${escapeHtml(prospect.pain)}</td>
+            <td class="process-cell">
+              <div class="process-top">
+                <span class="pill ${status.className}">${status.label}</span>
+                <span class="muted">Touch ${count}/${max}</span>
+              </div>
+              <strong>${escapeHtml(nextPlan ? nextPlan.label : 'Process complete')}</strong>
+              <span class="process-prompt">${escapeHtml(friendlyPrompt(prospect))}</span>
+            </td>
+            <td>
+              <div class="date-stack">
+                <span>Sent: ${formatDate(prospect.messageDate)}</span>
+                <span${isDue(prospect.followUpDate) && !prospect.callBooked ? ' style="color: var(--amber); font-weight: 800;"' : ''}>Follow-up: ${formatDate(prospect.followUpDate)}</span>
+              </div>
+            </td>
+            <td class="response-cell">${escapeHtml(prospect.response) || '<span class="muted">No response yet</span>'}</td>
+            <td><span class="pill ${prospect.callBooked ? 'booked' : 'open'}">${prospect.callBooked ? 'Booked' : 'Open'}</span></td>
+            <td class="step-cell">${escapeHtml(prospect.nextStep) || '<span class="muted">Not set</span>'}</td>
+            <td>
+              <div class="row-actions">
+                <button class="icon-btn" type="button" title="Edit ${escapeHtml(prospect.name)}" data-edit="${prospect.id}">Edit</button>
+                ${canAdvance ? `<button class="icon-btn" type="button" title="Mark touch sent" data-touch="${prospect.id}">Touch</button>` : ''}
+              </div>
+            </td>
+          </tr>
+        `
+      }).join('')
+    }
+
+    function resetForm() {
+      form.reset()
+      prospectId.value = ''
+      document.getElementById('relationship').value = 'Medium'
+      document.getElementById('touchCount').value = '0'
+      formTitle.textContent = 'Add person'
+      deleteButton.hidden = true
+    }
+
+    function readForm() {
+      const existing = prospects.find((item) => item.id === prospectId.value)
+      const messageDate = document.getElementById('messageDate').value
+      const rawTouchCount = Number(document.getElementById('touchCount').value)
+      const relationship = document.getElementById('relationship').value
+      const max = maxTouches(relationship)
+      const count = Math.max(0, Math.min(max, Number.isFinite(rawTouchCount) ? rawTouchCount : 0))
+      const finalCount = count || (messageDate && !existing ? 1 : count)
+      const followUpDate = document.getElementById('followUpDate').value || (finalCount < max ? suggestedFollowUpDate(messageDate, finalCount) : '')
+      return {
+        id: prospectId.value || crypto.randomUUID(),
+        name: document.getElementById('name').value.trim(),
+        business: document.getElementById('business').value.trim(),
+        relationship,
+        pain: document.getElementById('pain').value,
+        messageDate,
+        followUpDate,
+        touchCount: finalCount,
+        response: document.getElementById('response').value.trim(),
+        callBooked: document.getElementById('callBooked').checked,
+        nextStep: document.getElementById('nextStep').value.trim(),
+      }
+    }
+
+    function editProspect(id) {
+      const prospect = prospects.find((item) => item.id === id)
+      if (!prospect) return
+      prospectId.value = prospect.id
+      fields.forEach((field) => {
+        const element = document.getElementById(field)
+        if (!element) return
+        if (element.type === 'checkbox') element.checked = Boolean(prospect[field])
+        else element.value = prospect[field] || ''
+      })
+      document.getElementById('touchCount').value = String(touchCount(prospect))
+      formTitle.textContent = 'Edit person'
+      deleteButton.hidden = false
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+
+    function markTouch(id) {
+      prospects = prospects.map((prospect) => {
+        if (prospect.id !== id) return prospect
+        const current = touchCount(prospect)
+        const max = maxTouches(prospect.relationship)
+        const nextCount = Math.min(max, current + 1)
+        const sentToday = todayIso()
+        const nextPlan = nextCount < max ? followUpPlan[nextCount] : null
+        return {
+          ...prospect,
+          touchCount: nextCount,
+          messageDate: prospect.messageDate || sentToday,
+          followUpDate: nextPlan ? addDaysIso(sentToday, nextPlan.delay) : '',
+          nextStep: nextCount >= max ? 'Leave it for now unless they come back to you.' : prospect.nextStep,
+        }
+      })
+      save()
+      render()
+    }
+
+    function csvValue(value) {
+      return `"${String(value ?? '').replace(/"/g, '""')}"`
+    }
+
+    function exportCsv() {
+      const headers = ['Name', 'Offer/business', 'Relationship strength', 'Likely pain', 'Touch points sent', 'Max touches', 'Follow-up status', 'Message sent date', 'Follow-up date', 'Response', 'Call booked', 'Next step']
+      const rows = prospects.map((prospect) => [
+        prospect.name, prospect.business, prospect.relationship, prospect.pain, touchCount(prospect), maxTouches(prospect.relationship), followUpStatus(prospect).label, prospect.messageDate, prospect.followUpDate,
+        prospect.response, prospect.callBooked ? 'Yes' : 'No', prospect.nextStep,
+      ])
+      const csv = [headers, ...rows].map((row) => row.map(csvValue).join(',')).join('\n')
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'prospect-tracker.csv'
+      link.click()
+      URL.revokeObjectURL(url)
+    }
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault()
+      const prospect = readForm()
+      const index = prospects.findIndex((item) => item.id === prospect.id)
+      if (index >= 0) prospects[index] = prospect
+      else prospects.unshift(prospect)
+      save()
+      resetForm()
+      render()
+    })
+
+    tableBody.addEventListener('click', (event) => {
+      const editButton = event.target.closest('[data-edit]')
+      if (editButton) editProspect(editButton.dataset.edit)
+      const touchButton = event.target.closest('[data-touch]')
+      if (touchButton) markTouch(touchButton.dataset.touch)
+    })
+
+    deleteButton.addEventListener('click', () => {
+      if (!prospectId.value) return
+      prospects = prospects.filter((item) => item.id !== prospectId.value)
+      save()
+      resetForm()
+      render()
+    })
+
+    resetButton.addEventListener('click', resetForm)
+    searchInput.addEventListener('input', render)
+    exportButton.addEventListener('click', exportCsv)
+    clearButton.addEventListener('click', () => {
+      if (!prospects.length) return
+      if (!confirm('Clear every prospect in this tracker?')) return
+      prospects = []
+      save()
+      resetForm()
+      render()
+    })
+
+    resetForm()
+    render()
+  </script>
+</body>
+</html>

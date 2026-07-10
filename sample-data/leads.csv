@@ -1,0 +1,31 @@
+lead_id,full_name,email_address,lead_source,lead_status,assigned_to,created_date,last_contacted
+L001,Daniel Woods,daniel.woods@example.com,Meta Campaign B,new,Alex Morgan,2026-06-18,2026-06-19
+L002,Elena Brooks,elena.brooks@example.com,Webinar,open,Sam Rivera,2026-06-18,2026-06-20
+L003,Marcus Hall,marcus.hall@example.com,Meta Campaign B,new,Jordan Lee,2026-06-19,2026-06-19
+L004,Naomi Clarke,naomi.clarke@example.com,Referral,open,Priya Shah,2026-06-19,2026-06-21
+L005,Avery Cole,avery.cole@example.com,YouTube Organic,contacted,Alex Morgan,2026-06-20,2026-06-21
+L006,Morgan Price,morgan.price@example.com,Webinar,qualified,Sam Rivera,2026-06-20,2026-06-24
+L007,Riley Ford,riley.ford@example.com,Referral,qualified,Jordan Lee,2026-06-20,2026-06-24
+L008,Casey North,casey.north@example.com,YouTube Organic,qualified,Priya Shah,2026-06-21,2026-06-25
+L009,Leo Carter,leo.carter@example.com,Meta Campaign B,open,Theo Grant,2026-06-21,2026-06-22
+L010,Nina Patel,nina.patel@example.com,Instagram,open,Theo Grant,2026-06-21,2026-06-22
+L011,Maya Brown,maya.brown@example.com,YouTube Organic,qualified,Alex Morgan,2026-06-22,2026-06-23
+L012,Owen Reed,owen.reed@example.com,Webinar,qualified,Sam Rivera,2026-06-22,2026-06-24
+L013,Tara Singh,tara.singh@example.com,Meta Campaign B,qualified,Theo Grant,2026-06-23,2026-06-24
+L014,Grace Kim,grace.kim@example.com,Referral,qualified,Jordan Lee,2026-06-23,2026-06-25
+L015,Ethan Ward,ethan.ward@example.com,Partner,open,Priya Shah,2026-06-24,2026-06-25
+L016,Sofia Ramirez,sofia.ramirez@example.com,YouTube Organic,new,Alex Morgan,2026-06-24,2026-06-25
+L017,Luca Bennett,luca.bennett@example.com,Meta Campaign B,new,Sam Rivera,2026-06-25,2026-06-26
+L018,Harper Stone,harper.stone@example.com,Instagram,open,Jordan Lee,2026-06-25,2026-06-27
+L019,Isabel King,isabel.king@example.com,Meta Campaign B,new,Alex Morgan,2026-06-26,
+L020,Jamal Bryant,jamal.bryant@example.com,Webinar,open,Sam Rivera,2026-06-26,
+L021,Kiara Flynn,kiara.flynn@example.com,Instagram,new,Jordan Lee,2026-06-27,
+L022,Louis Carter,louis.carter@example.com,Partner,uncontacted,Priya Shah,2026-06-27,
+L023,Amara Lewis,amara.lewis@example.com,Meta Campaign B,open,Theo Grant,2026-06-28,
+L024,Noah Brooks,noah.brooks@example.com,YouTube Organic,new,Alex Morgan,2026-06-28,
+L025,Priya Nair,priya.nair@example.com,Webinar,new,Sam Rivera,2026-06-29,
+L026,Oscar Grant,oscar.grant@example.com,Referral,open,Jordan Lee,2026-06-29,
+L027,Mia Foster,mia.foster@example.com,Instagram,contacted,Priya Shah,2026-06-30,2026-06-30
+L028,Caleb Young,caleb.young@example.com,Meta Campaign B,new,Theo Grant,2026-06-30,
+L029,Test Lead,test.lead@example.com,Meta Campaign B,disqualified,Alex Morgan,2026-06-30,
+L030,Existing Client,existing.client@example.com,Referral,customer,Sam Rivera,2026-06-30,

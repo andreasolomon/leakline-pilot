@@ -1,0 +1,6 @@
+user_id,full_name,email_address,call_count,conversion_rate,is_active
+C001,Alex Morgan,alex@example.com,82,34.1,true
+C002,Sam Rivera,sam@example.com,76,29.7,true
+C003,Jordan Lee,jordan@example.com,63,21.5,true
+C004,Priya Shah,priya@example.com,58,27.8,true
+C005,Theo Grant,theo@example.com,44,16.4,true

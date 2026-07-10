@@ -1,0 +1,18 @@
+transaction_id,opportunity_id,customer_name,payment_amount,payment_status,due_date,payment_date
+P001,D006,Morgan Price,3000,paid,2026-06-10,2026-06-10
+P002,D006,Morgan Price,9000,paid,2026-06-24,2026-06-24
+P003,D007,Riley Ford,3000,paid,2026-06-12,2026-06-12
+P004,D007,Riley Ford,3000,paid,2026-06-25,2026-06-25
+P005,D008,Casey North,2500,paid,2026-06-14,2026-06-14
+P006,D008,Casey North,5500,paid,2026-06-29,2026-06-29
+P007,D001,Daniel Woods,2500,paid,2026-06-19,2026-06-19
+P008,D001,Daniel Woods,9500,overdue,2026-06-30,
+P009,D002,Elena Brooks,1500,paid,2026-06-20,2026-06-20
+P010,D002,Elena Brooks,7000,failed,2026-06-30,
+P011,D003,Marcus Hall,1500,overdue,2026-06-30,
+P012,D004,Naomi Clarke,2500,unpaid,2026-06-30,
+P013,D009,Leo Carter,3000,refunded,2026-06-16,2026-06-16
+P014,D010,Nina Patel,2200,chargeback,2026-06-18,2026-06-18
+P015,D015,Ethan Ward,750,written off,2026-06-12,
+P016,D011,Maya Brown,3500,paid,2026-06-30,2026-06-30
+P017,D012,Owen Reed,2000,overdue,2026-06-30,
