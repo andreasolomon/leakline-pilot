@@ -1,7 +1,8 @@
 import { FormEvent, ReactNode, useEffect, useState } from 'react'
 import { LockKeyhole, ShieldCheck } from 'lucide-react'
 
-export type AuthUser = { id: string; name: string; email: string }
+export type AuthWorkspace = { id: string; name: string; clientName: string; role: 'admin' | 'member'; recordCount: number }
+export type AuthUser = { id: string; name: string; email: string; role: 'admin' | 'member'; status: 'active' | 'disabled'; workspaceId: string; workspaces: AuthWorkspace[] }
 
 type AuthMeta = {
   enabled: boolean
@@ -25,7 +26,7 @@ async function authRequest(path: string, body?: Record<string, string>) {
 
 export default function AuthGate({ children }: { children: (props: { user: AuthUser; onLogout: () => void }) => ReactNode }) {
   const [meta, setMeta] = useState<AuthMeta | null>(null)
-  const [mode, setMode] = useState<'signup' | 'login'>('signup')
+  const [mode, setMode] = useState<'signup' | 'login' | 'request-access'>('signup')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [form, setForm] = useState({ name: '', email: '', password: '', inviteCode: '' })
@@ -61,8 +62,8 @@ export default function AuthGate({ children }: { children: (props: { user: AuthU
   if (!meta && !error) return <div className="auth-screen"><div className="auth-card compact"><LockKeyhole size={22} /><strong>Opening Leakline…</strong></div></div>
   if (meta?.authenticated && meta.user) return <>{children({ user: meta.user, onLogout: logout })}</>
 
-  const signupDisabled = !meta?.signupAvailable
-  const activeMode = signupDisabled ? 'login' : mode
+  const signupClosed = !meta?.signupAvailable
+  const activeMode = signupClosed && mode === 'signup' ? 'request-access' : mode
 
   return (
     <div className="auth-screen">
@@ -70,21 +71,29 @@ export default function AuthGate({ children }: { children: (props: { user: AuthU
         <div className="auth-brand"><span>LL</span><div><strong>Leakline</strong><small>Private pilot access</small></div></div>
         <div className="auth-copy">
           <p><ShieldCheck size={15} /> Client data is protected behind invite-only access.</p>
-          <h1>{activeMode === 'signup' ? 'Create your pilot login.' : 'Log in to Leakline.'}</h1>
-          <span>{activeMode === 'signup' ? 'Use the invite code from Leakline to create the first pilot account.' : 'Enter your email and password to view the private revenue dashboard.'}</span>
+          <h1>{activeMode === 'signup' ? 'Create your pilot login.' : activeMode === 'request-access' ? 'Account creation is managed privately.' : 'Log in to Leakline.'}</h1>
+          <span>{activeMode === 'signup' ? 'Use the invite code from Leakline to create the first pilot account.' : activeMode === 'request-access' ? 'For pilot security, new client accounts are created by an admin and assigned to the right workspace.' : 'Enter your email and password to view the private revenue dashboard.'}</span>
         </div>
         <div className="auth-tabs">
           <button className={activeMode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Log in</button>
-          <button className={activeMode === 'signup' ? 'active' : ''} disabled={signupDisabled} onClick={() => setMode('signup')}>Create account</button>
+          <button className={activeMode === 'signup' || activeMode === 'request-access' ? 'active' : ''} onClick={() => setMode(signupClosed ? 'request-access' : 'signup')}>Create account</button>
         </div>
-        <form onSubmit={submit} className="auth-form">
-          {activeMode === 'signup' && <label>Name<input autoComplete="name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Your name" /></label>}
-          <label>Email<input required type="email" autoComplete="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="you@company.com" /></label>
-          <label>Password<input required type="password" autoComplete={activeMode === 'signup' ? 'new-password' : 'current-password'} minLength={activeMode === 'signup' ? 10 : undefined} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder={activeMode === 'signup' ? 'At least 10 characters' : 'Your password'} /></label>
-          {activeMode === 'signup' && meta?.inviteRequired && <label>Invite code<input required autoComplete="off" value={form.inviteCode} onChange={(event) => setForm({ ...form, inviteCode: event.target.value })} placeholder="Private pilot invite code" /></label>}
-          {error && <div className="auth-error">{error}</div>}
-          <button className="auth-submit" disabled={busy}>{busy ? 'Please wait…' : activeMode === 'signup' ? 'Create account' : 'Log in'}</button>
-        </form>
+        {activeMode === 'request-access'
+          ? <div className="auth-form">
+              <div className="auth-note">
+                <strong>Create accounts from the Admin page.</strong>
+                <span>Log in as Andrea Admin, open Admin → User access, create the client user, then send them the public URL and temporary password privately.</span>
+              </div>
+              <button className="auth-submit" type="button" onClick={() => setMode('login')}>Back to log in</button>
+            </div>
+          : <form onSubmit={submit} className="auth-form">
+              {activeMode === 'signup' && <label>Name<input autoComplete="name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Your name" /></label>}
+              <label>Email<input required type="email" autoComplete="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="you@company.com" /></label>
+              <label>Password<input required type="password" autoComplete={activeMode === 'signup' ? 'new-password' : 'current-password'} minLength={activeMode === 'signup' ? 10 : undefined} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder={activeMode === 'signup' ? 'At least 10 characters' : 'Your password'} /></label>
+              {activeMode === 'signup' && meta?.inviteRequired && <label>Invite code<input required autoComplete="off" value={form.inviteCode} onChange={(event) => setForm({ ...form, inviteCode: event.target.value })} placeholder="Private pilot invite code" /></label>}
+              {error && <div className="auth-error">{error}</div>}
+              <button className="auth-submit" disabled={busy}>{busy ? 'Please wait…' : activeMode === 'signup' ? 'Create account' : 'Log in'}</button>
+            </form>}
       </section>
     </div>
   )

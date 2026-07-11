@@ -21,4 +21,5 @@ export type IntegrationSnapshot = {
   workspace: ImportWorkspace
   calls: Array<{ id: string }>
   statuses: ProviderStatus[]
+  activeWorkspace?: { id: string; name: string; clientName: string }
 }

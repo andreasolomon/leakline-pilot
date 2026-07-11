@@ -17,8 +17,18 @@ body { background: radial-gradient(circle at 82% 0%, #e3f2ee 0, transparent 27%)
 .brand { font-size: 16px; letter-spacing: 1.7px; }
 .brand-mark { background: #46d39e; color: #072233; border-radius: 8px; box-shadow: 0 0 0 4px #153a45; }
 .workspace-card { border-color: #284756; background: #0d2a39; }
+.workspace-card:hover, .workspace-card.open { border-color: #3a6b7c; background: #123748; }
 .workspace-logo { background: linear-gradient(145deg, #257b6d, #123e4e); }
 .workspace-card small { color: #7f9aa7; }
+.workspace-card.open svg { color: #47d4a0; }
+.workspace-menu { border-color: #284756; background: #092737; box-shadow: 0 18px 34px #00131d55; }
+.workspace-menu-label { color: #607d8a; }
+.workspace-menu button { color: #c6d6dc; }
+.workspace-menu button:hover { background: #123748; }
+.workspace-menu-current { background: #0f3445 !important; }
+.workspace-menu-current small { color: #7f9aa7; }
+.workspace-menu-current svg:last-child { color: #47d4a0; }
+.workspace-menu-note { border-top-color: #254858; color: #7f9aa7; }
 .sidebar nav p { color: #607d8a; }
 .sidebar nav button, .sidebar-bottom > button { color: #90a8b3; border-left: 2px solid transparent; border-radius: 5px; }
 .sidebar nav button:hover, .sidebar-bottom > button:hover { background: #0e2d3d; }

@@ -59,7 +59,7 @@ This repository includes `render.yaml` for a Render Blueprint:
 - Persistent disk: `/var/data`
 - Leakline data directory: `/var/data/leakline`
 
-The hosted pilot includes invite-only authentication. The first client creates their own login with the invite code you set in Render. By default, signup closes after the first account is created so the public URL does not become open registration.
+The hosted pilot includes invite-only authentication, admin-managed users, and separate client workspaces. Create the first account yourself; that first account becomes the admin. After that, public signup closes. New client workspaces and client/team accounts should be created from the in-app Admin page.
 
 Required Render environment values:
 
@@ -136,8 +136,9 @@ Sandbox mode is useful for product testing, but it is not a substitute for final
 ## Security model
 
 - Secrets never enter browser storage.
-- The public app is protected by HTTP-only session cookies and invite-only account creation.
-- The first pilot account is the only self-signup account unless `ALLOW_ADDITIONAL_USERS=true` is set.
+- The public app is protected by HTTP-only session cookies and invite-only first-admin account creation.
+- The first account becomes admin; admins can add, disable, restore, role-change, and reset passwords for other users from the app.
+- Each client workspace has separate connected credentials, synced data, calls, imported CSV cache, and alert review state.
 - Integration state is encrypted with AES-256-GCM.
 - Set a stable 64-character hexadecimal `LEAKLINE_ENCRYPTION_KEY` in deployed environments.
 - Without a configured key, Leakline generates a local key in `.data/local.key` with owner-only permissions.

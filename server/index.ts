@@ -11,7 +11,15 @@ const server = createApp(store).listen(port, host, () => {
 })
 
 const autoSyncMinutes = Math.max(1, Number(process.env.AUTO_SYNC_MINUTES ?? 15))
-const runAutoSync = () => new IntegrationService(store).syncAll().catch((error) => process.stderr.write(`Automatic sync failed: ${error instanceof Error ? error.message : String(error)}\n`))
+const runAutoSync = async () => {
+  try {
+    const state = await store.read()
+    const service = new IntegrationService(store)
+    for (const workspace of state.workspaces.filter((item) => !item.archivedAt)) await service.syncAll(workspace.id)
+  } catch (error) {
+    process.stderr.write(`Automatic sync failed: ${error instanceof Error ? error.message : String(error)}\n`)
+  }
+}
 const initialSyncTimer = setTimeout(runAutoSync, 5_000)
 initialSyncTimer.unref()
 const syncTimer = setInterval(runAutoSync, autoSyncMinutes * 60_000)

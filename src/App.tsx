@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity,
   AudioLines,
@@ -21,6 +21,7 @@ import {
   ShieldCheck,
   Sparkles,
   Target,
+  UserCog,
   Users,
   X,
 } from 'lucide-react'
@@ -30,7 +31,7 @@ import IntegrationPage from './IntegrationPage'
 import CallsPage from './CallsPage'
 import { datasetConfig, generateImportLeaks, mergeIntegrationWorkspace, type ImportWorkspace } from './csvEngine'
 import type { IntegrationSnapshot, ProviderStatus } from './integrationTypes'
-import type { AuthUser } from './AuthGate'
+import type { AuthUser, AuthWorkspace } from './AuthGate'
 
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 const workspaceStorageKey = 'leakline-v1-workspace'
@@ -343,50 +344,52 @@ export function importedSearchItems(workspace: ImportWorkspace, alerts: Leak[]):
   return items
 }
 
-function readSavedWorkspace(): ImportWorkspace {
-  try { return JSON.parse(localStorage.getItem(workspaceStorageKey) ?? '{}') as ImportWorkspace }
+const scopedStorageKey = (key: string, workspaceId: string) => `${key}-${workspaceId || 'default'}`
+
+function readSavedWorkspace(workspaceId: string): ImportWorkspace {
+  try { return JSON.parse(localStorage.getItem(scopedStorageKey(workspaceStorageKey, workspaceId)) ?? '{}') as ImportWorkspace }
   catch { return {} }
 }
 
-function saveWorkspace(workspace: ImportWorkspace) {
+function saveWorkspace(workspaceId: string, workspace: ImportWorkspace) {
   try {
     const compact = Object.fromEntries(Object.entries(workspace).map(([kind, item]) => [kind, { ...item, sourceText: undefined }]))
-    localStorage.setItem(workspaceStorageKey, JSON.stringify(compact))
+    localStorage.setItem(scopedStorageKey(workspaceStorageKey, workspaceId), JSON.stringify(compact))
   } catch { /* Storage can be unavailable in private browsing. */ }
 }
 
-function clearSavedWorkspace() {
-  try { localStorage.removeItem(workspaceStorageKey) }
+function clearSavedWorkspace(workspaceId: string) {
+  try { localStorage.removeItem(scopedStorageKey(workspaceStorageKey, workspaceId)) }
   catch { /* Storage can be unavailable in private browsing. */ }
 }
 
-function readSavedResolvedRecovery() {
-  try { return new Set<string>(JSON.parse(localStorage.getItem(resolvedRecoveryStorageKey) ?? '[]')) }
+function readSavedResolvedRecovery(workspaceId: string) {
+  try { return new Set<string>(JSON.parse(localStorage.getItem(scopedStorageKey(resolvedRecoveryStorageKey, workspaceId)) ?? '[]')) }
   catch { return new Set<string>() }
 }
 
-function saveResolvedRecovery(items: Set<string>) {
-  try { localStorage.setItem(resolvedRecoveryStorageKey, JSON.stringify([...items])) }
+function saveResolvedRecovery(workspaceId: string, items: Set<string>) {
+  try { localStorage.setItem(scopedStorageKey(resolvedRecoveryStorageKey, workspaceId), JSON.stringify([...items])) }
   catch { /* Storage can be unavailable in private browsing. */ }
 }
 
-function clearResolvedRecovery() {
-  try { localStorage.removeItem(resolvedRecoveryStorageKey) }
+function clearResolvedRecovery(workspaceId: string) {
+  try { localStorage.removeItem(scopedStorageKey(resolvedRecoveryStorageKey, workspaceId)) }
   catch { /* Storage can be unavailable in private browsing. */ }
 }
 
-function readSavedReviewedLeaks() {
-  try { return new Set<number>(JSON.parse(localStorage.getItem(reviewedLeaksStorageKey) ?? '[]')) }
+function readSavedReviewedLeaks(workspaceId: string) {
+  try { return new Set<number>(JSON.parse(localStorage.getItem(scopedStorageKey(reviewedLeaksStorageKey, workspaceId)) ?? '[]')) }
   catch { return new Set<number>() }
 }
 
-function saveReviewedLeaks(items: Set<number>) {
-  try { localStorage.setItem(reviewedLeaksStorageKey, JSON.stringify([...items])) }
+function saveReviewedLeaks(workspaceId: string, items: Set<number>) {
+  try { localStorage.setItem(scopedStorageKey(reviewedLeaksStorageKey, workspaceId), JSON.stringify([...items])) }
   catch { /* Storage can be unavailable in private browsing. */ }
 }
 
-function clearReviewedLeaks() {
-  try { localStorage.removeItem(reviewedLeaksStorageKey) }
+function clearReviewedLeaks(workspaceId: string) {
+  try { localStorage.removeItem(scopedStorageKey(reviewedLeaksStorageKey, workspaceId)) }
   catch { /* Storage can be unavailable in private browsing. */ }
 }
 
@@ -521,6 +524,150 @@ function initials(value: string) {
   return (parts.length > 1 ? `${parts[0][0]}${parts[1][0]}` : value.slice(0, 2)).toUpperCase()
 }
 
+type AdminUser = AuthUser & { createdAt: string; lastLoginAt?: string; createdBy?: string; disabledAt?: string }
+
+async function adminRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(path, {
+    ...options,
+    credentials: 'include',
+    headers: options.body ? { 'Content-Type': 'application/json', ...(options.headers ?? {}) } : options.headers,
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload.error ?? 'Admin request failed.')
+  return payload as T
+}
+
+function AdminPage({ currentUser }: { currentUser: AuthUser }) {
+  const [users, setUsers] = useState<AdminUser[]>([])
+  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'member' as AuthUser['role'], workspaceId: currentUser.workspaceId })
+  const [workspaceForm, setWorkspaceForm] = useState({ name: '', clientName: '' })
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  const loadUsers = async () => {
+    const payload = await adminRequest<{ users: AdminUser[] }>('/api/admin/users')
+    setUsers(payload.users)
+  }
+
+  useEffect(() => { void loadUsers().catch((event) => setError(event instanceof Error ? event.message : 'Could not load users.')) }, [])
+
+  const createUser = async (event: FormEvent) => {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      await adminRequest<{ user: AdminUser }>('/api/admin/users', { method: 'POST', body: JSON.stringify({ name: form.name, email: form.email, password: form.password, role: form.role, workspaceIds: [form.workspaceId] }) })
+      setForm({ name: '', email: '', password: '', role: 'member', workspaceId: currentUser.workspaceId })
+      await loadUsers()
+      setMessage('User created. Send them the public LeakLine URL and their temporary password privately.')
+    } catch (event) {
+      setError(event instanceof Error ? event.message : 'Could not create user.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const createWorkspace = async (event: FormEvent) => {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      await adminRequest<{ workspaceId: string }>('/api/workspaces', { method: 'POST', body: JSON.stringify(workspaceForm) })
+      setMessage('Workspace created. Reloading so the workspace switcher can pick it up.')
+      window.setTimeout(() => window.location.reload(), 450)
+    } catch (event) {
+      setError(event instanceof Error ? event.message : 'Could not create workspace.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const updateUser = async (userId: string, patch: Partial<Pick<AdminUser, 'role' | 'status'>>) => {
+    setError('')
+    setMessage('')
+    try {
+      await adminRequest<{ user: AdminUser }>(`/api/admin/users/${userId}`, { method: 'PATCH', body: JSON.stringify(patch) })
+      await loadUsers()
+      setMessage('User access updated.')
+    } catch (event) {
+      setError(event instanceof Error ? event.message : 'Could not update user.')
+    }
+  }
+
+  const resetUserPassword = async (item: AdminUser) => {
+    const password = window.prompt(`Enter a new temporary password for ${item.email}. It must be at least 10 characters.`)
+    if (!password) return
+    setError('')
+    setMessage('')
+    try {
+      await adminRequest<{ ok: true }>(`/api/admin/users/${item.id}/reset-password`, { method: 'POST', body: JSON.stringify({ password }) })
+      setMessage(`Password reset for ${item.email}. Send the new temporary password privately.`)
+    } catch (event) {
+      setError(event instanceof Error ? event.message : 'Could not reset password.')
+    }
+  }
+
+  return (
+    <section className="section-page">
+      <div className="page-heading section-heading">
+        <div><p>Admin</p><h1>User access</h1><span>Control who can enter the pilot workspace and what level of access they have.</span></div>
+      </div>
+      <div className="admin-grid">
+        <article className="panel admin-create-card">
+          <div className="panel-head"><div><span className="eyebrow"><UserCog size={14} /> Add user</span><h2>Create a private login</h2></div></div>
+          <form className="admin-form" onSubmit={createUser}>
+            <label>Name<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Client name" /></label>
+            <label>Email<input required type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="client@company.com" /></label>
+            <label>Temporary password<input required type="password" minLength={10} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder="At least 10 characters" /></label>
+            <label>Role<select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value as AuthUser['role'] })}><option value="member">Member</option><option value="admin">Admin</option></select></label>
+            <label>Workspace<select value={form.workspaceId} onChange={(event) => setForm({ ...form, workspaceId: event.target.value })}>{currentUser.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.clientName}</option>)}</select></label>
+            {error && <div className="auth-error">{error}</div>}
+            {message && <div className="admin-success">{message}</div>}
+            <button className="auth-submit" disabled={busy}>{busy ? 'Creating…' : 'Create user'}</button>
+          </form>
+        </article>
+        <article className="panel admin-users-card">
+          <div className="panel-head"><div><span className="eyebrow">{users.length} account{users.length === 1 ? '' : 's'}</span><h2>Current users</h2></div><button className="ghost-button" onClick={() => void loadUsers()}>Refresh</button></div>
+          <div className="admin-user-list">
+            {users.map((item) => (
+              <div className="admin-user-row" key={item.id}>
+                <span className="admin-avatar">{initials(item.name || item.email)}</span>
+                <section>
+                  <strong>{item.name || item.email}{item.id === currentUser.id ? ' · You' : ''}</strong>
+                  <small>{item.email}</small>
+                  <em>Created {new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(item.createdAt))}{item.lastLoginAt ? ` · Last login ${new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' }).format(new Date(item.lastLoginAt))}` : ''}</em>
+                  <em>{item.role === 'admin' ? 'All workspaces' : item.workspaces.map((workspace) => workspace.clientName).join(', ') || 'No workspace assigned'}</em>
+                </section>
+                <select aria-label={`Role for ${item.email}`} value={item.role} disabled={item.id === currentUser.id} onChange={(event) => void updateUser(item.id, { role: event.target.value as AuthUser['role'] })}>
+                  <option value="member">Member</option>
+                  <option value="admin">Admin</option>
+                </select>
+                <button className={`status-toggle ${item.status}`} disabled={item.id === currentUser.id} onClick={() => void updateUser(item.id, { status: item.status === 'active' ? 'disabled' : 'active' })}>{item.status === 'active' ? 'Disable' : 'Restore'}</button>
+                <button className="reset-password-button" onClick={() => void resetUserPassword(item)}>Reset</button>
+              </div>
+            ))}
+          </div>
+        </article>
+        <article className="panel admin-workspaces-card">
+          <div className="panel-head"><div><span className="eyebrow">{currentUser.workspaces.length} workspace{currentUser.workspaces.length === 1 ? '' : 's'}</span><h2>Client workspaces</h2></div></div>
+          <div className="workspace-admin-list">
+            {currentUser.workspaces.map((workspace) => <div key={workspace.id}><span className="workspace-logo">{initials(workspace.name)}</span><section><strong>{workspace.clientName}</strong><small>{workspace.recordCount} records · {workspace.id === currentUser.workspaceId ? 'Active now' : 'Available'}</small></section></div>)}
+          </div>
+          <form className="admin-form workspace-create-form" onSubmit={createWorkspace}>
+            <span className="eyebrow">Create workspace</span>
+            <label>Short label<input required value={workspaceForm.name} onChange={(event) => setWorkspaceForm({ ...workspaceForm, name: event.target.value })} placeholder="Client short name" /></label>
+            <label>Client/company name<input required value={workspaceForm.clientName} onChange={(event) => setWorkspaceForm({ ...workspaceForm, clientName: event.target.value })} placeholder="Full client company name" /></label>
+            <button className="secondary-button" disabled={busy}>Create workspace</button>
+          </form>
+        </article>
+      </div>
+    </section>
+  )
+}
+
 export default function App({ user, onLogout }: AppProps) {
   const [activeNav, setActiveNav] = useState('Overview')
   const [period, setPeriod] = useState<Period>('This month')
@@ -528,15 +675,17 @@ export default function App({ user, onLogout }: AppProps) {
   const [selectedMetric, setSelectedMetric] = useState<Metric | null>(null)
   const [showChartInfo, setShowChartInfo] = useState(false)
   const [mobileNav, setMobileNav] = useState(false)
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [periodMenuOpen, setPeriodMenuOpen] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const workspaceMenuRef = useRef<HTMLDivElement>(null)
   const [leakFilter, setLeakFilter] = useState<'All' | Leak['severity']>('All')
-  const [importedWorkspace, setImportedWorkspace] = useState<ImportWorkspace>(readSavedWorkspace)
-  const [resolvedRecovery, setResolvedRecovery] = useState<Set<string>>(readSavedResolvedRecovery)
-  const [reviewedLeaks, setReviewedLeaks] = useState<Set<number>>(readSavedReviewedLeaks)
+  const [importedWorkspace, setImportedWorkspace] = useState<ImportWorkspace>(() => readSavedWorkspace(user.workspaceId))
+  const [resolvedRecovery, setResolvedRecovery] = useState<Set<string>>(() => readSavedResolvedRecovery(user.workspaceId))
+  const [reviewedLeaks, setReviewedLeaks] = useState<Set<number>>(() => readSavedReviewedLeaks(user.workspaceId))
   const [integrationStatuses, setIntegrationStatuses] = useState<ProviderStatus[]>([])
   const [syncedCalls, setSyncedCalls] = useState(0)
 
@@ -574,6 +723,7 @@ export default function App({ user, onLogout }: AppProps) {
   const displayRecovery = useMemo(() => rawRecovery.filter((item) => !resolvedRecovery.has(recoveryItemKey(item))), [rawRecovery, resolvedRecovery])
   const displayHealth = useMemo(() => importedDataHealth(importedWorkspace), [importedWorkspace])
   const sourceConfidence = useMemo(() => dataSourceConfidence(importedWorkspace, integrationStatuses, syncedCalls), [importedWorkspace, integrationStatuses, syncedCalls])
+  const currentWorkspace = user.workspaces.find((workspace) => workspace.id === user.workspaceId) ?? user.workspaces[0] ?? { id: user.workspaceId, name: 'Workspace', clientName: 'Client workspace', role: user.role, recordCount: 0 } satisfies AuthWorkspace
   const largestFunnelDrop = useMemo(() => displayFunnel.slice(1).map((stage, index) => ({
     label: `${displayFunnel[index].label} → ${stage.label.toLowerCase()}`,
     records: Math.max(0, displayFunnel[index].value - stage.value),
@@ -630,14 +780,14 @@ export default function App({ user, onLogout }: AppProps) {
 
   const resolveRecovery = (item: RecoveryItem) => setResolvedRecovery((current) => {
     const next = new Set(current).add(recoveryItemKey(item))
-    saveResolvedRecovery(next)
+    saveResolvedRecovery(user.workspaceId, next)
     return next
   })
 
   const markLeakReviewed = (leak: Leak) => {
     setReviewedLeaks((current) => {
       const next = new Set(current).add(leak.id)
-      saveReviewedLeaks(next)
+      saveReviewedLeaks(user.workspaceId, next)
       return next
     })
     setSelectedLeak(null)
@@ -663,7 +813,7 @@ export default function App({ user, onLogout }: AppProps) {
 
   const markAllAlertsReviewed = () => {
     const next = new Set([...reviewedLeaks, ...activeLeaks.map((leak) => leak.id)])
-    saveReviewedLeaks(next)
+    saveReviewedLeaks(user.workspaceId, next)
     setReviewedLeaks(next)
   }
 
@@ -701,15 +851,25 @@ export default function App({ user, onLogout }: AppProps) {
         setSearchOpen(true)
         setNotificationsOpen(false)
         setPeriodMenuOpen(false)
+        setWorkspaceMenuOpen(false)
       }
       if (event.key === 'Escape') {
         setSearchOpen(false)
         setNotificationsOpen(false)
         setPeriodMenuOpen(false)
+        setWorkspaceMenuOpen(false)
       }
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
+  }, [])
+
+  useEffect(() => {
+    const closeWorkspaceMenu = (event: PointerEvent) => {
+      if (!workspaceMenuRef.current?.contains(event.target as Node)) setWorkspaceMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', closeWorkspaceMenu)
+    return () => document.removeEventListener('pointerdown', closeWorkspaceMenu)
   }, [])
 
   useEffect(() => {
@@ -724,6 +884,14 @@ export default function App({ user, onLogout }: AppProps) {
   }, [])
 
   useEffect(() => {
+    setImportedWorkspace(readSavedWorkspace(user.workspaceId))
+    setResolvedRecovery(readSavedResolvedRecovery(user.workspaceId))
+    setReviewedLeaks(readSavedReviewedLeaks(user.workspaceId))
+    setIntegrationStatuses([])
+    setSyncedCalls(0)
+  }, [user.workspaceId])
+
+  useEffect(() => {
     let active = true
     const refreshLiveWorkspace = async () => {
       try {
@@ -736,7 +904,7 @@ export default function App({ user, onLogout }: AppProps) {
         setImportedWorkspace((current) => {
           const next = mergeIntegrationWorkspace(current, body.workspace ?? {})
           if (JSON.stringify(next) === JSON.stringify(current)) return current
-          saveWorkspace(next)
+          saveWorkspace(user.workspaceId, next)
           return next
         })
       } catch { /* CSV mode continues to work when the integration service is unavailable. */ }
@@ -744,12 +912,12 @@ export default function App({ user, onLogout }: AppProps) {
     void refreshLiveWorkspace()
     const timer = window.setInterval(refreshLiveWorkspace, 60_000)
     return () => { active = false; window.clearInterval(timer) }
-  }, [])
+  }, [user.workspaceId])
 
   const applyIntegratedWorkspace = (workspace: ImportWorkspace) => {
-    saveWorkspace(workspace)
-    clearResolvedRecovery()
-    clearReviewedLeaks()
+    saveWorkspace(user.workspaceId, workspace)
+    clearResolvedRecovery(user.workspaceId)
+    clearReviewedLeaks(user.workspaceId)
     setImportedWorkspace(workspace)
     setResolvedRecovery(new Set())
     setReviewedLeaks(new Set())
@@ -760,31 +928,61 @@ export default function App({ user, onLogout }: AppProps) {
     setSyncedCalls(snapshot.calls?.length ?? 0)
   }
 
+  const openWorkspacePage = (target: string) => {
+    setActiveNav(target)
+    setWorkspaceMenuOpen(false)
+    setMobileNav(false)
+  }
+
+  const switchWorkspace = async (workspaceId: string) => {
+    if (workspaceId === user.workspaceId) {
+      setWorkspaceMenuOpen(false)
+      return
+    }
+    await adminRequest<{ user: AuthUser }>('/api/workspaces/active', { method: 'POST', body: JSON.stringify({ workspaceId }) })
+    window.location.reload()
+  }
+
   return (
     <div className="app-shell">
       <aside className={`sidebar ${mobileNav ? 'open' : ''}`}>
         <div className="brand"><span className="brand-mark"><ShieldCheck size={20} /></span><span>LEAKLINE</span></div>
         <button className="close-nav" onClick={() => setMobileNav(false)}><X size={20} /></button>
-        <div className="workspace-card">
-          <span className="workspace-logo">A</span>
-          <span><strong>Ascend Growth</strong><small>Partners · High-ticket funnel</small></span>
-          <ChevronDown size={16} />
+        <div className="workspace-switcher" ref={workspaceMenuRef}>
+          <button className={`workspace-card ${workspaceMenuOpen ? 'open' : ''}`} type="button" aria-haspopup="menu" aria-expanded={workspaceMenuOpen} onClick={() => setWorkspaceMenuOpen((open) => !open)}>
+            <span className="workspace-logo">{initials(currentWorkspace.name)}</span>
+            <span><strong>{currentWorkspace.name}</strong><small>{currentWorkspace.clientName}</small></span>
+            <ChevronDown size={16} />
+          </button>
+          {workspaceMenuOpen && <div className="workspace-menu" role="menu">
+            <span className="workspace-menu-label">Client workspaces</span>
+            {user.workspaces.map((workspace) => <button className={workspace.id === user.workspaceId ? 'workspace-menu-current' : ''} role="menuitem" key={workspace.id} onClick={() => void switchWorkspace(workspace.id)}>
+              <span className="workspace-logo">{initials(workspace.name)}</span>
+              <span><strong>{workspace.clientName}</strong><small>{workspace.recordCount} stored records{workspace.id === user.workspaceId ? ' · active' : ''}</small></span>
+              {workspace.id === user.workspaceId && <CheckCircle2 size={15} />}
+            </button>)}
+            <button role="menuitem" onClick={() => openWorkspacePage(dataEntryNav)}><FileUp size={14} /><span>Connect or import data</span></button>
+            <button role="menuitem" onClick={() => openWorkspacePage('Data health')}><ShieldCheck size={14} /><span>View data health</span></button>
+            {user.role === 'admin' && <button role="menuitem" onClick={() => openWorkspacePage('Admin')}><UserCog size={14} /><span>Manage users</span></button>}
+            <div className="workspace-menu-note">Each workspace has its own connected tools, calls, payments and imported data.</div>
+          </div>}
         </div>
         <nav>
           <p>Workspace</p>
           {navItems.map(({ label, icon: Icon, badge }) => (
-            <button key={label} className={activeNav === label ? 'active' : ''} onClick={() => { setActiveNav(label); setMobileNav(false) }}>
+            <button key={label} className={activeNav === label ? 'active' : ''} onClick={() => { setActiveNav(label); setMobileNav(false); setWorkspaceMenuOpen(false) }}>
               <Icon size={18} /><span>{label}</span>{badge && <em>{badge}</em>}
             </button>
           ))}
           <p>Manage</p>
-          <button className={activeNav === dataEntryNav || activeNav === 'Integrations' ? 'active' : ''} onClick={() => setActiveNav(dataEntryNav)}><Gauge size={18} /><span>Data sources</span></button>
-          <button className={activeNav === 'Calls' ? 'active' : ''} onClick={() => setActiveNav('Calls')}><AudioLines size={18} /><span>Calls</span></button>
-          <button className={activeNav === 'Payments' ? 'active' : ''} onClick={() => setActiveNav('Payments')}><CircleDollarSign size={18} /><span>Payments</span></button>
-          <button className={activeNav === 'Data health' ? 'active' : ''} onClick={() => setActiveNav('Data health')}><ShieldCheck size={18} /><span>Data health</span></button>
+          <button className={activeNav === dataEntryNav || activeNav === 'Integrations' ? 'active' : ''} onClick={() => openWorkspacePage(dataEntryNav)}><Gauge size={18} /><span>Data sources</span></button>
+          <button className={activeNav === 'Calls' ? 'active' : ''} onClick={() => openWorkspacePage('Calls')}><AudioLines size={18} /><span>Calls</span></button>
+          <button className={activeNav === 'Payments' ? 'active' : ''} onClick={() => openWorkspacePage('Payments')}><CircleDollarSign size={18} /><span>Payments</span></button>
+          <button className={activeNav === 'Data health' ? 'active' : ''} onClick={() => openWorkspacePage('Data health')}><ShieldCheck size={18} /><span>Data health</span></button>
+          {user.role === 'admin' && <button className={activeNav === 'Admin' ? 'active' : ''} onClick={() => openWorkspacePage('Admin')}><UserCog size={18} /><span>Admin</span></button>}
         </nav>
         <div className="sidebar-bottom">
-          <button className={activeNav === 'Settings' ? 'active' : ''} onClick={() => setActiveNav('Settings')}><Settings size={18} /><span>Settings</span></button>
+          <button className={activeNav === 'Settings' ? 'active' : ''} onClick={() => openWorkspacePage('Settings')}><Settings size={18} /><span>Settings</span></button>
           <button className="profile" onClick={onLogout} title="Sign out of Leakline"><span>{initials(user.name || user.email)}</span><div><strong>{user.name || user.email}</strong><small>{user.email}</small></div><ChevronDown size={15} /></button>
         </div>
       </aside>
@@ -815,9 +1013,9 @@ export default function App({ user, onLogout }: AppProps) {
         </header>
 
         <div className="content">
-          {activeNav === dataEntryNav ? <ImportPage initialWorkspace={importedWorkspace} onOpenIntegrations={() => setActiveNav('Integrations')} onSandboxSnapshot={applyIntegrationSnapshot} onApply={(workspace, _alerts, sourceMode) => { if (sourceMode === 'exports') { setIntegrationStatuses([]); setSyncedCalls(0) } applyIntegratedWorkspace(workspace); setActiveNav('Overview') }} onClear={() => { clearSavedWorkspace(); clearResolvedRecovery(); clearReviewedLeaks(); setImportedWorkspace({}); setResolvedRecovery(new Set()); setReviewedLeaks(new Set()); setIntegrationStatuses([]); setSyncedCalls(0) }} /> : activeNav === 'Integrations' ? <IntegrationPage initialWorkspace={importedWorkspace} onWorkspace={applyIntegratedWorkspace} /> : activeNav === 'Calls' ? <CallsPage /> : activeNav !== 'Overview' ? <SectionPage section={activeNav} onOpenLeak={setSelectedLeak} alertData={activeLeaks} workspace={periodWorkspace} funnelData={displayFunnel} closerData={displayClosers} recoveryData={displayRecovery} healthData={displayHealth} onResolveRecovery={resolveRecovery} reviewedLeaks={reviewedLeaks} /> : <>
+          {activeNav === dataEntryNav ? <ImportPage initialWorkspace={importedWorkspace} onOpenIntegrations={() => setActiveNav('Integrations')} onSandboxSnapshot={applyIntegrationSnapshot} onApply={(workspace, _alerts, sourceMode) => { if (sourceMode === 'exports') { setIntegrationStatuses([]); setSyncedCalls(0) } applyIntegratedWorkspace(workspace); setActiveNav('Overview') }} onClear={() => { clearSavedWorkspace(user.workspaceId); clearResolvedRecovery(user.workspaceId); clearReviewedLeaks(user.workspaceId); setImportedWorkspace({}); setResolvedRecovery(new Set()); setReviewedLeaks(new Set()); setIntegrationStatuses([]); setSyncedCalls(0) }} /> : activeNav === 'Integrations' ? <IntegrationPage initialWorkspace={importedWorkspace} onWorkspace={applyIntegratedWorkspace} /> : activeNav === 'Calls' ? <CallsPage /> : activeNav === 'Admin' && user.role === 'admin' ? <AdminPage currentUser={user} /> : activeNav !== 'Overview' ? <SectionPage section={activeNav} onOpenLeak={setSelectedLeak} alertData={activeLeaks} workspace={periodWorkspace} funnelData={displayFunnel} closerData={displayClosers} recoveryData={displayRecovery} healthData={displayHealth} onResolveRecovery={resolveRecovery} reviewedLeaks={reviewedLeaks} /> : <>
           <section className="page-heading">
-            <div><p>Revenue command · Ascend Growth Partners sample audit</p><h1>Scale without leaking revenue.</h1><span>{hasImportedData ? `${importedLeaks.length} leaks found across ${Object.values(importedWorkspace).reduce((sum, item) => sum + item.rows.length, 0)} current-funnel records before adding more volume.` : `Before adding more leads, calls, or closers, find the revenue already leaking from the funnel you have.`}</span></div>
+            <div><p>Revenue command · {currentWorkspace.clientName}</p><h1>Scale without leaking revenue.</h1><span>{hasImportedData ? `${importedLeaks.length} leaks found across ${Object.values(importedWorkspace).reduce((sum, item) => sum + item.rows.length, 0)} current-funnel records before adding more volume.` : `Before adding more leads, calls, or closers, find the revenue already leaking from the funnel you have.`}</span></div>
             <div className="period-switcher">
               {(['7 days', 'This month', 'Quarter'] as Period[]).map((item) => <button key={item} className={period === item ? 'active' : ''} onClick={() => setPeriod(item)}>{item}</button>)}
             </div>

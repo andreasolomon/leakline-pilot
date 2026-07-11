@@ -1,9 +1,54 @@
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto'
 import { join } from 'node:path'
-import type { StoreState } from './types.js'
+import type { StoreState, WorkspaceIntegrationState, WorkspaceRecord } from './types.js'
 
-const emptyState = (): StoreState => ({ credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, calls: [], oauthStates: {}, users: [], sessions: [] })
+const defaultWorkspaceId = 'workspace-ascend-growth'
+
+const emptyWorkspaceState = (): WorkspaceIntegrationState => ({ credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, calls: [], oauthStates: {} })
+
+const emptyState = (): StoreState => ({ workspaces: [], credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, calls: [], oauthStates: {}, users: [], sessions: [] })
+
+function workspaceFromLegacy(input: Partial<StoreState>): WorkspaceRecord {
+  return {
+    id: defaultWorkspaceId,
+    name: 'Ascend Growth',
+    clientName: 'Ascend Growth Partners',
+    createdAt: new Date().toISOString(),
+    credentials: input.credentials ?? {},
+    connections: input.connections ?? {},
+    oauthConfig: input.oauthConfig ?? {},
+    workspace: input.workspace ?? {},
+    calls: input.calls ?? [],
+    oauthStates: input.oauthStates ?? {},
+  }
+}
+
+function normaliseState(input: Partial<StoreState>): StoreState {
+  const state = { ...emptyState(), ...input } as StoreState
+  state.workspaces = (state.workspaces?.length ? state.workspaces : [workspaceFromLegacy(input)]).map((workspace) => ({
+    ...emptyWorkspaceState(),
+    ...workspace,
+    clientName: workspace.clientName || workspace.name || 'Client workspace',
+    name: workspace.name || workspace.clientName || 'Client workspace',
+    credentials: workspace.credentials ?? {},
+    connections: workspace.connections ?? {},
+    oauthConfig: workspace.oauthConfig ?? {},
+    workspace: workspace.workspace ?? {},
+    calls: workspace.calls ?? [],
+    oauthStates: workspace.oauthStates ?? {},
+  }))
+  const fallbackWorkspaceId = state.workspaces[0]?.id ?? defaultWorkspaceId
+  state.users = (state.users ?? []).map((user, index) => ({
+    ...user,
+    role: user.role ?? (index === 0 ? 'admin' : 'member'),
+    status: user.status ?? 'active',
+    workspaceIds: user.workspaceIds?.length ? user.workspaceIds : [fallbackWorkspaceId],
+    defaultWorkspaceId: user.defaultWorkspaceId && state.workspaces.some((workspace) => workspace.id === user.defaultWorkspaceId) ? user.defaultWorkspaceId : fallbackWorkspaceId,
+  }))
+  state.sessions = (state.sessions ?? []).map((session) => ({ ...session, activeWorkspaceId: session.activeWorkspaceId ?? state.users.find((user) => user.id === session.userId)?.defaultWorkspaceId ?? fallbackWorkspaceId }))
+  return state
+}
 
 export class EncryptedStore {
   private readonly directory: string
@@ -44,10 +89,10 @@ export class EncryptedStore {
       const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(payload.iv, 'base64'))
       decipher.setAuthTag(Buffer.from(payload.tag, 'base64'))
       const decoded = Buffer.concat([decipher.update(Buffer.from(payload.data, 'base64')), decipher.final()]).toString('utf8')
-      this.state = { ...emptyState(), ...JSON.parse(decoded) } as StoreState
+      this.state = normaliseState(JSON.parse(decoded) as Partial<StoreState>)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('The encrypted integration store could not be read. Check the encryption key.')
-      this.state = emptyState()
+      this.state = normaliseState({})
     }
     return this.state
   }

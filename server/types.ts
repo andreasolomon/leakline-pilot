@@ -50,6 +50,7 @@ export type CredentialMap = {
 }
 
 export type StoreState = {
+  workspaces: WorkspaceRecord[]
   credentials: Partial<{ [K in ProviderId]: CredentialMap[K] }>
   connections: Partial<Record<ProviderId, ConnectionMeta>>
   oauthConfig: Partial<Record<'google-calendar', { clientId: string; clientSecret: string }>>
@@ -58,6 +59,24 @@ export type StoreState = {
   oauthStates: Partial<Record<ProviderId, { value: string; expiresAt: number }>>
   users: UserRecord[]
   sessions: SessionRecord[]
+}
+
+export type WorkspaceIntegrationState = {
+  credentials: Partial<{ [K in ProviderId]: CredentialMap[K] }>
+  connections: Partial<Record<ProviderId, ConnectionMeta>>
+  oauthConfig: Partial<Record<'google-calendar', { clientId: string; clientSecret: string }>>
+  workspace: IntegrationWorkspace
+  calls: CallRecord[]
+  oauthStates: Partial<Record<ProviderId, { value: string; expiresAt: number }>>
+}
+
+export type WorkspaceRecord = WorkspaceIntegrationState & {
+  id: string
+  name: string
+  clientName: string
+  createdAt: string
+  createdBy?: string
+  archivedAt?: string
 }
 
 export type ProviderStatus = {
@@ -79,10 +98,16 @@ export type UserRecord = {
   id: string
   name: string
   email: string
+  role: 'admin' | 'member'
+  status: 'active' | 'disabled'
   passwordHash: string
   passwordSalt: string
   createdAt: string
   lastLoginAt?: string
+  createdBy?: string
+  disabledAt?: string
+  workspaceIds?: string[]
+  defaultWorkspaceId?: string
 }
 
 export type SessionRecord = {
@@ -90,4 +115,5 @@ export type SessionRecord = {
   userId: string
   createdAt: string
   expiresAt: number
+  activeWorkspaceId?: string
 }

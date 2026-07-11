@@ -81,7 +81,7 @@ describe('Version 2 service boundary', () => {
 
       const created = await agent.post('/api/auth/signup').send({ name: 'Client', email: 'client@example.com', password: 'secure-pass-123', inviteCode: 'pilot-secret' })
       expect(created.status).toBe(201)
-      expect(created.body.user).toMatchObject({ email: 'client@example.com', name: 'Client' })
+      expect(created.body.user).toMatchObject({ email: 'client@example.com', name: 'Client', role: 'admin', status: 'active' })
 
       const integrations = await agent.get('/api/integrations')
       expect(integrations.status).toBe(200)
@@ -89,6 +89,74 @@ describe('Version 2 service boundary', () => {
 
       await agent.post('/api/auth/logout').send({})
       expect((await agent.get('/api/integrations')).status).toBe(401)
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  })
+
+  it('lets admins manage users while protecting admin-only actions', async () => {
+    process.env.LEAKLINE_AUTH_ENABLED = 'true'
+    process.env.LEAKLINE_INVITE_CODE = 'pilot-secret'
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-admin-'))
+    try {
+      const app = createApp(new EncryptedStore(directory))
+      const admin = request.agent(app)
+      await admin.post('/api/auth/signup').send({ name: 'Andrea', email: 'admin@example.com', password: 'secure-pass-123', inviteCode: 'pilot-secret' }).expect(201)
+
+      const created = await admin.post('/api/admin/users').send({ name: 'Client Viewer', email: 'viewer@example.com', password: 'client-pass-123', role: 'member' }).expect(201)
+      expect(created.body.user).toMatchObject({ email: 'viewer@example.com', role: 'member', status: 'active' })
+
+      const users = await admin.get('/api/admin/users').expect(200)
+      expect(users.body.users).toHaveLength(2)
+
+      const member = request.agent(app)
+      await member.post('/api/auth/login').send({ email: 'viewer@example.com', password: 'client-pass-123' }).expect(200)
+      await member.get('/api/admin/users').expect(403)
+
+      await admin.patch(`/api/admin/users/${created.body.user.id}`).send({ status: 'disabled' }).expect(200)
+      await member.get('/api/integrations').expect(401)
+      await request(app).post('/api/auth/login').send({ email: 'viewer@example.com', password: 'client-pass-123' }).expect(401)
+
+      await admin.patch(`/api/admin/users/${created.body.user.id}`).send({ status: 'active' }).expect(200)
+      await admin.post(`/api/admin/users/${created.body.user.id}/reset-password`).send({ password: 'new-client-pass-123' }).expect(200)
+      await request(app).post('/api/auth/login').send({ email: 'viewer@example.com', password: 'new-client-pass-123' }).expect(200)
+
+      const self = users.body.users.find((user: { email: string }) => user.email === 'admin@example.com')
+      await admin.patch(`/api/admin/users/${self.id}`).send({ status: 'disabled' }).expect(403)
+      await admin.patch(`/api/admin/users/${self.id}`).send({ role: 'member' }).expect(403)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('isolates synced data between client workspaces', async () => {
+    process.env.LEAKLINE_AUTH_ENABLED = 'true'
+    process.env.LEAKLINE_INVITE_CODE = 'pilot-secret'
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-workspaces-'))
+    try {
+      const app = createApp(new EncryptedStore(directory))
+      const admin = request.agent(app)
+      await admin.post('/api/auth/signup').send({ name: 'Andrea', email: 'admin@example.com', password: 'secure-pass-123', inviteCode: 'pilot-secret' }).expect(201)
+
+      const firstSync = await admin.post('/api/integrations/highlevel/sandbox-sync').expect(200)
+      expect(firstSync.body.workspace.leads.rows).toHaveLength(3)
+
+      const created = await admin.post('/api/workspaces').send({ name: 'Second Client', clientName: 'Second Client LLC' }).expect(201)
+      await admin.post('/api/workspaces/active').send({ workspaceId: created.body.workspaceId }).expect(200)
+
+      const emptySecond = await admin.get('/api/integrations').expect(200)
+      expect(emptySecond.body.workspace.leads).toBeUndefined()
+
+      await admin.post('/api/integrations/stripe/sandbox-sync').expect(200)
+      const secondSnapshot = await admin.get('/api/integrations').expect(200)
+      expect(secondSnapshot.body.workspace.payments.rows).toHaveLength(5)
+      expect(secondSnapshot.body.workspace.leads).toBeUndefined()
+
+      const saved = await new EncryptedStore(directory).read()
+      const firstWorkspace = saved.workspaces.find((workspace) => workspace.id !== created.body.workspaceId)
+      const secondWorkspace = saved.workspaces.find((workspace) => workspace.id === created.body.workspaceId)
+      expect(firstWorkspace?.workspace.leads?.rows).toHaveLength(3)
+      expect(firstWorkspace?.workspace.payments).toBeUndefined()
+      expect(secondWorkspace?.workspace.payments?.rows).toHaveLength(5)
+      expect(secondWorkspace?.workspace.leads).toBeUndefined()
     } finally { await rm(directory, { recursive: true, force: true }) }
   })
 
@@ -148,9 +216,9 @@ describe('Version 2 service boundary', () => {
       expect(fathom.body.statuses.find((status: { id: string }) => status.id === 'fathom')).toMatchObject({ connected: true, mode: 'sandbox', recordCounts: { calls: 2 } })
 
       const saved = await new EncryptedStore(directory).read()
-      expect(saved.credentials.highlevel).toBeUndefined()
-      expect(saved.credentials.fathom).toBeUndefined()
-      expect(saved.calls[0].transcript).toContain('The price feels high')
+      expect(saved.workspaces[0].credentials.highlevel).toBeUndefined()
+      expect(saved.workspaces[0].credentials.fathom).toBeUndefined()
+      expect(saved.workspaces[0].calls[0].transcript).toContain('The price feels high')
     } finally { await rm(directory, { recursive: true, force: true }) }
   })
 
