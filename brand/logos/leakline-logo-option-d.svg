@@ -1,0 +1,16 @@
+<svg width="920" height="260" viewBox="0 0 920 260" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">LeakLine logo option D</title>
+  <desc id="desc">A premium LL monogram with a revenue line running through the mark next to the LeakLine wordmark.</desc>
+  <rect width="920" height="260" rx="34" fill="#FCFBF8"/>
+  <g transform="translate(58 48)">
+    <rect width="164" height="164" rx="38" fill="#25241F"/>
+    <path d="M49 38 V119 H87" stroke="#FCFBF8" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M91 38 V119 H129" stroke="#FCFBF8" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M38 96 C57 88 73 88 91 74 C108 61 123 57 142 58" stroke="#D7E8A6" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="91" cy="74" r="5" fill="#BB4A3F"/>
+  </g>
+  <g transform="translate(258 70)">
+    <text x="0" y="64" fill="#25241F" font-family="Manrope, DM Sans, Arial, sans-serif" font-size="70" font-weight="800" letter-spacing="-3">LeakLine</text>
+    <text x="4" y="108" fill="#77766E" font-family="DM Sans, Arial, sans-serif" font-size="22" font-weight="600" letter-spacing=".6">REVENUE RECOVERY FOR HIGH-TICKET FUNNELS</text>
+  </g>
+</svg>

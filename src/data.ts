@@ -28,7 +28,7 @@ export type Metric = {
 export const kpis: Metric[] = [
   { label: 'Net retained', value: '$156,456', change: 8.2, detail: '84% of collected cash', formula: 'Cash collected − refunds − chargebacks − written-off defaults', calculation: '$186,420 − $29,964 = $156,456', explanation: 'Revenue that remains after confirmed reversals and losses.' },
   { label: 'Confirmed lost', value: '$5,250', change: -14.1, detail: '2.8% of collected cash', inverse: true, formula: 'Completed refunds + lost chargebacks + formal write-offs', calculation: '$3,000 + $1,500 + $750 = $5,250', explanation: 'Revenue confirmed as lost—not merely delayed or considered at risk.' },
-  { label: 'Revenue at risk', value: '$38,250', change: -8.2, detail: '5 open signals', inverse: true, formula: 'Estimated impact of all unresolved leak alerts', calculation: '$11,750 + $9,800 + $7,200 + $5,500 + $4,000', explanation: 'Revenue that may be lost but could still be protected or recovered.' },
+  { label: 'Revenue at risk', value: '$38,250', change: -8.2, detail: '5 open recovery cases', inverse: true, formula: 'Estimated impact of all unresolved detected leaks', calculation: '$11,750 + $9,800 + $7,200 + $5,500 + $4,000', explanation: 'Revenue linked to open detected leaks that may still be protected or recovered.' },
   { label: 'Show rate', value: '72.8%', change: 3.1, detail: '318 of 437 bookings', formula: 'Attended calls ÷ booked calls × 100', calculation: '318 ÷ 437 × 100 = 72.8%', explanation: 'How reliably booked prospects reach a live sales conversation.' },
 ]
 

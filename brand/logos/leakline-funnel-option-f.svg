@@ -1,0 +1,18 @@
+<svg width="980" height="280" viewBox="0 0 980 280" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">LeakLine funnel logo option F</title>
+  <desc id="desc">A premium circular funnel-drip mark with a clean LeakLine wordmark.</desc>
+  <rect width="980" height="280" rx="36" fill="#FFFFFF"/>
+  <g transform="translate(60 42)">
+    <circle cx="98" cy="98" r="94" fill="#EAF7F2"/>
+    <circle cx="98" cy="98" r="82" fill="#FFFFFF" stroke="#BDE3D6" stroke-width="2"/>
+    <path d="M52 57H144L114 96V128H82V96L52 57Z" fill="#102D3A"/>
+    <path d="M68 70H128" stroke="#D9F99D" stroke-width="8" stroke-linecap="round"/>
+    <path d="M82 88H114" stroke="#D9F99D" stroke-width="8" stroke-linecap="round"/>
+    <path d="M98 135C87.8 147.6 84.6 157.8 98 164C111.4 157.8 108.2 147.6 98 135Z" fill="#F97316"/>
+    <path d="M98 168C112 168 123.4 172.5 132 181" stroke="#102D3A" stroke-width="6" stroke-linecap="round" opacity=".22"/>
+  </g>
+  <g transform="translate(302 74)">
+    <text x="0" y="67" fill="#102D3A" font-family="Manrope, Inter, Arial, sans-serif" font-size="76" font-weight="850" letter-spacing="-3.8">LeakLine</text>
+    <text x="4" y="114" fill="#14775A" font-family="DM Sans, Inter, Arial, sans-serif" font-size="23" font-weight="800" letter-spacing=".35">REVENUE LEAK DETECTION FOR SALES TEAMS</text>
+  </g>
+</svg>

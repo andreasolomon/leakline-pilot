@@ -361,6 +361,9 @@
     .pill.open { background: var(--red-soft); color: var(--red); }
     .pill.due { background: var(--amber-soft); color: var(--amber); }
     .pill.done { background: #e7eff2; color: #315363; }
+    .pill.pilot { background: #dfeefa; color: #235f7d; }
+    .pill.loom-requested { background: var(--amber-soft); color: var(--amber); }
+    .pill.loom-sent { background: var(--green-soft); color: var(--green); }
 
     .date-stack {
       display: grid;
@@ -369,15 +372,26 @@
       font-size: 11px;
     }
 
-    .response-cell, .step-cell, .process-cell {
+    .response-cell, .step-cell, .process-cell, .pilot-cell, .loom-cell {
       color: #294552;
       line-height: 1.4;
       overflow-wrap: anywhere;
     }
 
-    .process-cell {
+    .process-cell, .pilot-cell, .loom-cell {
       display: grid;
       gap: 7px;
+    }
+
+    .loom-cell a {
+      color: var(--blue);
+      font-size: 11px;
+      font-weight: 800;
+      text-decoration: none;
+    }
+
+    .loom-cell a:hover {
+      text-decoration: underline;
     }
 
     .process-top {
@@ -472,7 +486,7 @@
       }
 
       table {
-        min-width: 1180px;
+        min-width: 1360px;
       }
     }
 
@@ -498,11 +512,14 @@
         <div class="stat"><strong id="totalCount">0</strong><span>People</span></div>
         <div class="stat"><strong id="followUpCount">0</strong><span>Follow-ups</span></div>
         <div class="stat"><strong id="bookedCount">0</strong><span>Booked</span></div>
+        <div class="stat"><strong id="loomRequestedCount">0</strong><span>Loom asks</span></div>
+        <div class="stat"><strong id="loomSentCount">0</strong><span>Looms sent</span></div>
+        <div class="stat"><strong id="pilotCount">0</strong><span>Pilots</span></div>
       </div>
     </header>
 
     <div class="controls">
-      <input class="search" id="searchInput" type="search" placeholder="Search name, offer, pain, response, or next step">
+      <input class="search" id="searchInput" type="search" placeholder="Search name, offer, pain, Loom, response, or next step">
       <button class="button" id="exportButton" type="button">Export CSV</button>
       <button class="button danger" id="clearButton" type="button">Clear</button>
     </div>
@@ -569,8 +586,35 @@
           <label>Response
             <textarea id="response"></textarea>
           </label>
+          <div class="two">
+            <label class="check-row">Loom requested
+              <input id="loomRequested" type="checkbox">
+            </label>
+            <label class="check-row">Loom sent
+              <input id="loomSent" type="checkbox">
+            </label>
+          </div>
+          <div class="two">
+            <label>Loom sent date
+              <input id="loomSentDate" type="date">
+            </label>
+            <label>Loom link
+              <input id="loomLink" type="url" placeholder="https://www.loom.com/share/...">
+            </label>
+          </div>
           <label class="check-row">Call booked
             <input id="callBooked" type="checkbox">
+          </label>
+          <div class="two">
+            <label class="check-row">Pilot accepted
+              <input id="pilotAccepted" type="checkbox">
+            </label>
+            <label>Pilot accepted date
+              <input id="pilotAcceptedDate" type="date">
+            </label>
+          </div>
+          <label>Pilot update
+            <textarea id="pilotUpdate"></textarea>
           </label>
           <label>Next step
             <textarea id="nextStep"></textarea>
@@ -586,15 +630,17 @@
         <table>
           <thead>
             <tr>
-              <th style="width: 14%">Person</th>
-              <th style="width: 9%">Relationship</th>
-              <th style="width: 10%">Likely pain</th>
-              <th style="width: 18%">Follow-up process</th>
-              <th style="width: 13%">Dates</th>
-              <th style="width: 13%">Response</th>
-              <th style="width: 7%">Call</th>
-              <th style="width: 9%">Next step</th>
-              <th style="width: 7%"></th>
+              <th style="width: 12%">Person</th>
+              <th style="width: 7%">Relationship</th>
+              <th style="width: 8%">Likely pain</th>
+              <th style="width: 14%">Follow-up process</th>
+              <th style="width: 10%">Dates</th>
+              <th style="width: 10%">Response</th>
+              <th style="width: 12%">Loom</th>
+              <th style="width: 6%">Call</th>
+              <th style="width: 9%">Pilot</th>
+              <th style="width: 6%">Next step</th>
+              <th style="width: 6%"></th>
             </tr>
           </thead>
           <tbody id="tableBody"></tbody>
@@ -611,7 +657,7 @@
 
   <script>
     const storageKey = 'simple-prospect-tracker-v1'
-    const fields = ['name', 'business', 'relationship', 'pain', 'messageDate', 'followUpDate', 'touchCount', 'response', 'callBooked', 'nextStep']
+    const fields = ['name', 'business', 'relationship', 'pain', 'messageDate', 'followUpDate', 'touchCount', 'response', 'loomRequested', 'loomSent', 'loomSentDate', 'loomLink', 'callBooked', 'pilotAccepted', 'pilotAcceptedDate', 'pilotUpdate', 'nextStep']
     const followUpPlan = [
       { label: 'Send the demo ask', delay: 0, prompt: 'Quick one, I built a small demo and thought of you. Want me to show you?' },
       { label: 'Soft check-in', delay: 2, prompt: 'Just checking this did not get buried. No pressure either way.' },
@@ -632,6 +678,9 @@
     const totalCount = document.getElementById('totalCount')
     const followUpCount = document.getElementById('followUpCount')
     const bookedCount = document.getElementById('bookedCount')
+    const loomRequestedCount = document.getElementById('loomRequestedCount')
+    const loomSentCount = document.getElementById('loomSentCount')
+    const pilotCount = document.getElementById('pilotCount')
 
     let prospects = load()
 
@@ -667,6 +716,17 @@
       return String(value || '').replace(/[&<>"']/g, (character) => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;',
       }[character]))
+    }
+
+    function safeUrl(value) {
+      const url = String(value || '').trim()
+      if (!url) return ''
+      try {
+        const parsed = new URL(url)
+        return ['http:', 'https:'].includes(parsed.protocol) ? url : ''
+      } catch {
+        return ''
+      }
     }
 
     function formatDate(value) {
@@ -705,7 +765,10 @@
     }
 
     function followUpStatus(prospect) {
+      if (prospect.pilotAccepted) return { label: 'Pilot', className: 'pilot' }
       if (prospect.callBooked) return { label: 'Booked', className: 'booked' }
+      if (prospect.loomSent) return { label: 'Loom sent', className: 'loom-sent' }
+      if (prospect.loomRequested) return { label: 'Loom asked', className: 'loom-requested' }
       if (touchCount(prospect) >= maxTouches(prospect.relationship)) return { label: 'Leave it', className: 'done' }
       if (isDue(prospect.followUpDate)) return { label: 'Due', className: 'due' }
       if (prospect.followUpDate) return { label: 'Scheduled', className: 'medium' }
@@ -727,15 +790,22 @@
     function render() {
       const rows = currentRows()
       totalCount.textContent = prospects.length
-      followUpCount.textContent = prospects.filter((prospect) => isDue(prospect.followUpDate) && !prospect.callBooked).length
+      followUpCount.textContent = prospects.filter((prospect) => isDue(prospect.followUpDate) && !prospect.callBooked && !prospect.pilotAccepted).length
       bookedCount.textContent = prospects.filter((prospect) => prospect.callBooked).length
+      loomRequestedCount.textContent = prospects.filter((prospect) => prospect.loomRequested && !prospect.loomSent).length
+      loomSentCount.textContent = prospects.filter((prospect) => prospect.loomSent).length
+      pilotCount.textContent = prospects.filter((prospect) => prospect.pilotAccepted).length
       emptyState.hidden = rows.length > 0
       tableBody.innerHTML = rows.map((prospect) => {
         const count = touchCount(prospect)
         const max = maxTouches(prospect.relationship)
         const status = followUpStatus(prospect)
         const nextPlan = nextTouchPlan(prospect)
-        const canAdvance = !prospect.callBooked && count < max
+        const canAdvance = !prospect.callBooked && !prospect.pilotAccepted && count < max
+        const canMarkPilot = !prospect.pilotAccepted
+        const canMarkLoomRequested = !prospect.loomRequested && !prospect.loomSent
+        const canMarkLoomSent = !prospect.loomSent
+        const loomLink = safeUrl(prospect.loomLink)
         return `
           <tr>
             <td class="name-cell">
@@ -759,12 +829,25 @@
               </div>
             </td>
             <td class="response-cell">${escapeHtml(prospect.response) || '<span class="muted">No response yet</span>'}</td>
+            <td class="loom-cell">
+              <span class="pill ${prospect.loomSent ? 'loom-sent' : prospect.loomRequested ? 'loom-requested' : 'done'}">${prospect.loomSent ? 'Sent' : prospect.loomRequested ? 'Requested' : 'Not asked'}</span>
+              <span class="muted">${prospect.loomSent ? `Sent: ${formatDate(prospect.loomSentDate)}` : prospect.loomRequested ? 'Waiting to send Loom' : 'No Loom needed yet'}</span>
+              ${loomLink ? `<a href="${escapeHtml(loomLink)}" target="_blank" rel="noopener">Open Loom</a>` : '<span class="muted">No Loom link</span>'}
+            </td>
             <td><span class="pill ${prospect.callBooked ? 'booked' : 'open'}">${prospect.callBooked ? 'Booked' : 'Open'}</span></td>
+            <td class="pilot-cell">
+              <span class="pill ${prospect.pilotAccepted ? 'pilot' : 'done'}">${prospect.pilotAccepted ? 'Accepted' : 'Not yet'}</span>
+              <span class="muted">${prospect.pilotAccepted ? `Accepted: ${formatDate(prospect.pilotAcceptedDate)}` : 'No pilot accepted'}</span>
+              <span>${escapeHtml(prospect.pilotUpdate) || '<span class="muted">No pilot update</span>'}</span>
+            </td>
             <td class="step-cell">${escapeHtml(prospect.nextStep) || '<span class="muted">Not set</span>'}</td>
             <td>
               <div class="row-actions">
                 <button class="icon-btn" type="button" title="Edit ${escapeHtml(prospect.name)}" data-edit="${prospect.id}">Edit</button>
                 ${canAdvance ? `<button class="icon-btn" type="button" title="Mark touch sent" data-touch="${prospect.id}">Touch</button>` : ''}
+                ${canMarkLoomRequested ? `<button class="icon-btn" type="button" title="Mark Loom requested" data-loom-requested="${prospect.id}">Asked</button>` : ''}
+                ${canMarkLoomSent ? `<button class="icon-btn" type="button" title="Mark Loom sent" data-loom-sent="${prospect.id}">Sent</button>` : ''}
+                ${canMarkPilot ? `<button class="icon-btn" type="button" title="Mark pilot accepted" data-pilot="${prospect.id}">Pilot</button>` : ''}
               </div>
             </td>
           </tr>
@@ -777,6 +860,8 @@
       prospectId.value = ''
       document.getElementById('relationship').value = 'Medium'
       document.getElementById('touchCount').value = '0'
+      document.getElementById('loomSentDate').value = ''
+      document.getElementById('pilotAcceptedDate').value = ''
       formTitle.textContent = 'Add person'
       deleteButton.hidden = true
     }
@@ -789,7 +874,12 @@
       const max = maxTouches(relationship)
       const count = Math.max(0, Math.min(max, Number.isFinite(rawTouchCount) ? rawTouchCount : 0))
       const finalCount = count || (messageDate && !existing ? 1 : count)
-      const followUpDate = document.getElementById('followUpDate').value || (finalCount < max ? suggestedFollowUpDate(messageDate, finalCount) : '')
+      const loomRequested = document.getElementById('loomRequested').checked
+      const loomSent = document.getElementById('loomSent').checked
+      const loomSentDate = document.getElementById('loomSentDate').value || (loomSent ? todayIso() : '')
+      const pilotAccepted = document.getElementById('pilotAccepted').checked
+      const pilotAcceptedDate = document.getElementById('pilotAcceptedDate').value || (pilotAccepted ? todayIso() : '')
+      const followUpDate = pilotAccepted ? '' : document.getElementById('followUpDate').value || (finalCount < max ? suggestedFollowUpDate(messageDate, finalCount) : '')
       return {
         id: prospectId.value || crypto.randomUUID(),
         name: document.getElementById('name').value.trim(),
@@ -800,7 +890,14 @@
         followUpDate,
         touchCount: finalCount,
         response: document.getElementById('response').value.trim(),
-        callBooked: document.getElementById('callBooked').checked,
+        loomRequested: loomRequested || loomSent,
+        loomSent,
+        loomSentDate,
+        loomLink: document.getElementById('loomLink').value.trim(),
+        callBooked: document.getElementById('callBooked').checked || pilotAccepted,
+        pilotAccepted,
+        pilotAcceptedDate,
+        pilotUpdate: document.getElementById('pilotUpdate').value.trim(),
         nextStep: document.getElementById('nextStep').value.trim(),
       }
     }
@@ -841,15 +938,66 @@
       render()
     }
 
+    function markLoomRequested(id) {
+      prospects = prospects.map((prospect) => {
+        if (prospect.id !== id) return prospect
+        return {
+          ...prospect,
+          loomRequested: true,
+          response: prospect.response || 'Asked for Loom',
+          nextStep: prospect.nextStep || 'Record/send Loom.',
+        }
+      })
+      save()
+      render()
+    }
+
+    function markLoomSent(id) {
+      prospects = prospects.map((prospect) => {
+        if (prospect.id !== id) return prospect
+        const current = touchCount(prospect)
+        const max = maxTouches(prospect.relationship)
+        const nextCount = Math.min(max, Math.max(1, current + 1))
+        return {
+          ...prospect,
+          loomRequested: true,
+          loomSent: true,
+          loomSentDate: prospect.loomSentDate || todayIso(),
+          touchCount: nextCount,
+          messageDate: prospect.messageDate || todayIso(),
+          followUpDate: prospect.followUpDate || addDaysIso(todayIso(), 2),
+          nextStep: prospect.nextStep || 'Follow up for Loom feedback.',
+        }
+      })
+      save()
+      render()
+    }
+
+    function markPilotAccepted(id) {
+      prospects = prospects.map((prospect) => {
+        if (prospect.id !== id) return prospect
+        return {
+          ...prospect,
+          callBooked: true,
+          pilotAccepted: true,
+          pilotAcceptedDate: prospect.pilotAcceptedDate || todayIso(),
+          followUpDate: '',
+          nextStep: prospect.nextStep || 'Add pilot notes after the first update.',
+        }
+      })
+      save()
+      render()
+    }
+
     function csvValue(value) {
       return `"${String(value ?? '').replace(/"/g, '""')}"`
     }
 
     function exportCsv() {
-      const headers = ['Name', 'Offer/business', 'Relationship strength', 'Likely pain', 'Touch points sent', 'Max touches', 'Follow-up status', 'Message sent date', 'Follow-up date', 'Response', 'Call booked', 'Next step']
+      const headers = ['Name', 'Offer/business', 'Relationship strength', 'Likely pain', 'Touch points sent', 'Max touches', 'Follow-up status', 'Message sent date', 'Follow-up date', 'Response', 'Loom requested', 'Loom sent', 'Loom sent date', 'Loom link', 'Call booked', 'Pilot accepted', 'Pilot accepted date', 'Pilot update', 'Next step']
       const rows = prospects.map((prospect) => [
         prospect.name, prospect.business, prospect.relationship, prospect.pain, touchCount(prospect), maxTouches(prospect.relationship), followUpStatus(prospect).label, prospect.messageDate, prospect.followUpDate,
-        prospect.response, prospect.callBooked ? 'Yes' : 'No', prospect.nextStep,
+        prospect.response, prospect.loomRequested ? 'Yes' : 'No', prospect.loomSent ? 'Yes' : 'No', prospect.loomSentDate, prospect.loomLink, prospect.callBooked ? 'Yes' : 'No', prospect.pilotAccepted ? 'Yes' : 'No', prospect.pilotAcceptedDate, prospect.pilotUpdate, prospect.nextStep,
       ])
       const csv = [headers, ...rows].map((row) => row.map(csvValue).join(',')).join('\n')
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
@@ -877,6 +1025,12 @@
       if (editButton) editProspect(editButton.dataset.edit)
       const touchButton = event.target.closest('[data-touch]')
       if (touchButton) markTouch(touchButton.dataset.touch)
+      const loomRequestedButton = event.target.closest('[data-loom-requested]')
+      if (loomRequestedButton) markLoomRequested(loomRequestedButton.dataset.loomRequested)
+      const loomSentButton = event.target.closest('[data-loom-sent]')
+      if (loomSentButton) markLoomSent(loomSentButton.dataset.loomSent)
+      const pilotButton = event.target.closest('[data-pilot]')
+      if (pilotButton) markPilotAccepted(pilotButton.dataset.pilot)
     })
 
     deleteButton.addEventListener('click', () => {

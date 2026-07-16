@@ -15,7 +15,7 @@ const runAutoSync = async () => {
   try {
     const state = await store.read()
     const service = new IntegrationService(store)
-    for (const workspace of state.workspaces.filter((item) => !item.archivedAt)) await service.syncAll(workspace.id)
+    for (const workspace of state.workspaces.filter((item) => !item.archivedAt && item.id !== 'workspace-leakline-demo')) await service.syncAll(workspace.id)
   } catch (error) {
     process.stderr.write(`Automatic sync failed: ${error instanceof Error ? error.message : String(error)}\n`)
   }

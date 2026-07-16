@@ -1,0 +1,18 @@
+<svg width="920" height="260" viewBox="0 0 920 260" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">LeakLine logo option C</title>
+  <desc id="desc">A pipeline alert mark with segmented revenue line next to the LeakLine wordmark.</desc>
+  <rect width="920" height="260" rx="34" fill="#25241F"/>
+  <g transform="translate(58 48)">
+    <rect width="164" height="164" rx="38" fill="#302F2A" stroke="#484741" stroke-width="2"/>
+    <path d="M32 84 H67" stroke="#D7E8A6" stroke-width="13" stroke-linecap="round"/>
+    <path d="M95 84 H132" stroke="#D7E8A6" stroke-width="13" stroke-linecap="round"/>
+    <path d="M73 77 L89 93" stroke="#BB4A3F" stroke-width="9" stroke-linecap="round"/>
+    <path d="M89 77 L73 93" stroke="#BB4A3F" stroke-width="9" stroke-linecap="round"/>
+    <circle cx="132" cy="84" r="12" fill="#D7E8A6"/>
+    <path d="M47 116 C61 107 79 105 93 116 C106 126 119 126 133 114" stroke="#14775A" stroke-width="8" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(258 70)">
+    <text x="0" y="64" fill="#FCFBF8" font-family="Manrope, DM Sans, Arial, sans-serif" font-size="70" font-weight="800" letter-spacing="-3">LeakLine</text>
+    <text x="4" y="108" fill="#D7E8A6" font-family="DM Sans, Arial, sans-serif" font-size="22" font-weight="700" letter-spacing=".6">REVENUE INTELLIGENCE FOR SALES OPERATORS</text>
+  </g>
+</svg>

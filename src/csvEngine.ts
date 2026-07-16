@@ -170,12 +170,12 @@ export function generateImportLeaks(workspace: ImportWorkspace): Leak[] {
       description: `${bookingRate}% of matchable leads booked within the current 48-hour window.`,
       impact: unbookedOptIns.length * 300,
       severity: bookingRate < 60 ? 'critical' : 'warning',
-      owner: 'Growth',
+      owner: 'Setter / SDR',
       count: unbookedOptIns.length,
       action: 'Review unbooked leads',
       periodLabel: 'Imported data',
       evidence: [`${eligibleOptIns.length} eligible opt-ins`, `${eligibleOptIns.length - unbookedOptIns.length} matched appointments`, `${unbookedOptIns.length} leads without a booking`],
-      suggestedActions: ['Send an immediate booking reminder', 'Compare the booking gap by source', 'Contact high-intent unbooked leads first'],
+      suggestedActions: [`Work the ${unbookedOptIns.length}-lead unbooked queue within 24 hours, starting with the newest high-intent opt-ins`, 'Run a three-touch booking recovery sequence across phone, SMS and email over the next 48 hours', 'Record recovered bookings against this case and compare the 7-day booking rate by source'],
       relatedRecords: unbookedOptIns.slice(0, 25).map((row, index) => ({
         id: String(row.id ?? `unbooked-${index + 1}`),
         name: String(row.name ?? row.email ?? `Unbooked lead ${index + 1}`),
@@ -192,14 +192,14 @@ export function generateImportLeaks(workspace: ImportWorkspace): Leak[] {
   const staleDeals = deals.filter((row) => !['won', 'closed won', 'lost', 'closed lost'].includes(textValue(row.stage)) && !row.next_action && daysSince(row.updated_at) >= 3)
   if (staleDeals.length) {
     const impact = money(staleDeals.reduce((sum, row) => sum + numberValue(row.value), 0) * .25)
-    alerts.push({ id: 101, type: 'Follow-up', title: `${staleDeals.length} open deals have no next action`, description: `These opportunities have been inactive for at least three days with no next step recorded.`, impact, severity: 'critical', owner: 'Sales team', count: staleDeals.length, action: 'Review deals', periodLabel: 'Imported data', evidence: [`${staleDeals.length} inactive open deals`, `$${money(staleDeals.reduce((sum, row) => sum + numberValue(row.value), 0)).toLocaleString('en-US')} total pipeline value`], suggestedActions: ['Assign an owner and dated next action', 'Contact the highest-value opportunities first'] })
+    alerts.push({ id: 101, type: 'Follow-up', title: `${staleDeals.length} open deals have no next action`, description: `These opportunities have been inactive for at least three days with no next step recorded.`, impact, severity: 'critical', owner: 'Sales manager', count: staleDeals.length, action: 'Review deals', periodLabel: 'Imported data', evidence: [`${staleDeals.length} inactive open deals`, `$${money(staleDeals.reduce((sum, row) => sum + numberValue(row.value), 0)).toLocaleString('en-US')} total pipeline value`], suggestedActions: [`Assign every one of the ${staleDeals.length} deals an owner, dated next step and decision deadline before the next sales stand-up`, 'Work the highest-value inactive opportunities first and record the outcome of every contact attempt', 'Review the queue after 7 days and record pipeline value recovered, lost or still blocked'] })
   }
 
   const completed = appointments.filter((row) => ['attended', 'showed', 'completed', 'no show', 'no_show', 'missed'].includes(textValue(row.status)))
   const noShows = completed.filter((row) => ['no show', 'no_show', 'missed'].includes(textValue(row.status)))
   if (completed.length >= 5 && noShows.length / completed.length > .25) {
     const showRate = Math.round((1 - noShows.length / completed.length) * 100)
-    alerts.push({ id: 102, type: 'Attendance', title: `Show rate is ${showRate}% across imported appointments`, description: `${noShows.length} of ${completed.length} completed appointments were marked as no-shows.`, impact: noShows.length * 750, severity: showRate < 60 ? 'critical' : 'warning', owner: 'Growth', count: noShows.length, action: 'Inspect appointments', periodLabel: 'Imported data', evidence: [`${completed.length} completed appointments`, `${noShows.length} no-shows`], suggestedActions: ['Compare show rate by source', 'Add confirmation reminders to the weakest segment'] })
+    alerts.push({ id: 102, type: 'Attendance', title: `Show rate is ${showRate}% across imported appointments`, description: `${noShows.length} of ${completed.length} completed appointments were marked as no-shows.`, impact: noShows.length * 750, severity: showRate < 60 ? 'critical' : 'warning', owner: 'Setter / SDR manager', count: noShows.length, action: 'Inspect appointments', periodLabel: 'Imported data', evidence: [`${completed.length} completed appointments`, `${noShows.length} no-shows`], suggestedActions: [`Launch a same-day rebooking sequence for the ${noShows.length} no-shows and assign each record to a setter`, 'Identify the weakest source and booking-delay cohort before changing the whole reminder process', 'Run a 7-day confirmation test and record recovered appointments and show-rate movement'] })
   }
 
   const payments = workspace.payments?.rows ?? []
@@ -210,17 +210,17 @@ export function generateImportLeaks(workspace: ImportWorkspace): Leak[] {
   })
   if (atRisk.length) {
     const impact = money(atRisk.reduce((sum, row) => sum + numberValue(row.amount), 0))
-    alerts.push({ id: 103, type: 'Collection', title: `${atRisk.length} payments need recovery`, description: `${impact.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })} is failed, overdue or unpaid.`, impact, severity: 'critical', owner: 'Finance', count: atRisk.length, action: 'Review payments', periodLabel: 'Imported data', evidence: [`${atRisk.length} at-risk payment records`, `$${impact.toLocaleString('en-US')} outstanding`], suggestedActions: ['Retry eligible failed payments', 'Assign an owner to every overdue balance'] })
+    alerts.push({ id: 103, type: 'Collection', title: `${atRisk.length} payments need recovery`, description: `${impact.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })} is failed, overdue or unpaid.`, impact, severity: 'critical', owner: 'Finance / Revenue operations', count: atRisk.length, action: 'Review payments', periodLabel: 'Imported data', evidence: [`${atRisk.length} at-risk payment records`, `$${impact.toLocaleString('en-US')} outstanding`], suggestedActions: [`Retry every eligible failed payment today and assign the ${atRisk.length}-account queue to a named owner`, 'Contact unresolved accounts within one business day with a payment link or approved payment-plan option', 'Record cash recovered, balances rescheduled and amounts written off before closing this case'] })
   }
 
   const untouched = leads.filter((row) => ['new', 'open', 'uncontacted', ''].includes(textValue(row.status)) && daysSince(row.created_at) >= 2 && !row.last_activity_at)
-  if (untouched.length) alerts.push({ id: 104, type: 'Lead response', title: `${untouched.length} new leads have no recorded activity`, description: 'These leads are at least two days old and have no last-activity timestamp.', impact: untouched.length * 300, severity: 'warning', owner: 'Sales team', count: untouched.length, action: 'Review leads', periodLabel: 'Imported data', evidence: [`${untouched.length} untouched leads`], suggestedActions: ['Route unowned leads', 'Contact the oldest leads first'] })
+  if (untouched.length) alerts.push({ id: 104, type: 'Lead response', title: `${untouched.length} new leads have no recorded activity`, description: 'These leads are at least two days old and have no last-activity timestamp.', impact: untouched.length * 300, severity: 'warning', owner: 'Setter / SDR manager', count: untouched.length, action: 'Review leads', periodLabel: 'Imported data', evidence: [`${untouched.length} untouched leads`], suggestedActions: [`Route all ${untouched.length} untouched leads to named setters before the next dialling block`, 'Attempt the oldest leads first using the team response sequence and record every disposition', 'Review contact, booking and disqualification outcomes after 48 hours'] })
 
   const closers = workspace.closers?.rows ?? []
   const lowPerformers = closers.filter((row) => numberValue(row.calls) >= 10 && numberValue(row.close_rate) > 0 && numberValue(row.close_rate) < 20)
   if (lowPerformers.length) {
     const closerNoun = lowPerformers.length === 1 ? 'closer is' : 'closers are'
-    alerts.push({ id: 105, type: 'Conversion', title: `${lowPerformers.length} ${closerNoun} below a 20% close rate`, description: 'The imported performance snapshot shows a coaching opportunity with a meaningful call sample.', impact: lowPerformers.reduce((sum, row) => sum + numberValue(row.calls), 0) * 250, severity: 'opportunity', owner: 'Sales manager', count: lowPerformers.length, action: 'View team', periodLabel: 'Imported data', evidence: lowPerformers.slice(0, 3).map((row) => `${row.name ?? 'Closer'}: ${row.close_rate}% across ${row.calls} calls`), suggestedActions: ['Review successful calls from stronger closers', 'Recheck after ten additional qualified calls'] })
+    alerts.push({ id: 105, type: 'Conversion', title: `${lowPerformers.length} ${closerNoun} below a 20% close rate`, description: 'LeakLine detected a possible closer-level conversion leak with enough call volume to investigate.', impact: lowPerformers.reduce((sum, row) => sum + numberValue(row.calls), 0) * 250, severity: 'opportunity', owner: 'Revenue operator / Sales manager', count: lowPerformers.length, action: 'View team', periodLabel: 'Imported data', evidence: lowPerformers.slice(0, 3).map((row) => `${row.name ?? 'Closer'}: ${row.close_rate}% across ${row.calls} calls`), suggestedActions: ['Compare lead source, qualification and offer mix before treating the gap as a closer-performance issue', 'Review three lost calls and three successful calls with each affected closer and document the repeated behaviour', 'Run the agreed coaching intervention for the next 10 qualified calls, then record conversion and cash movement'] })
   }
 
   return alerts.sort((a, b) => b.impact - a.impact)

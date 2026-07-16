@@ -12,7 +12,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return body
 }
 
-export default function IntegrationPage({ initialWorkspace, onWorkspace }: { initialWorkspace: ImportWorkspace; onWorkspace: (workspace: ImportWorkspace) => void }) {
+export default function IntegrationPage({ initialWorkspace, onWorkspace, canManage = true, canSync = true }: { initialWorkspace: ImportWorkspace; onWorkspace: (workspace: ImportWorkspace) => void; canManage?: boolean; canSync?: boolean }) {
   const [snapshot, setSnapshot] = useState<Snapshot>({ workspace: {}, calls: [], statuses: [] })
   const [selected, setSelected] = useState<Status | null>(null)
   const [form, setForm] = useState<Record<string, string>>({})
@@ -37,6 +37,7 @@ export default function IntegrationPage({ initialWorkspace, onWorkspace }: { ini
   }
 
   const connect = async () => {
+    if (!canManage) return
     if (!selected) return
     setBusy(`connect-${selected.id}`); setError('')
     try {
@@ -58,6 +59,7 @@ export default function IntegrationPage({ initialWorkspace, onWorkspace }: { ini
   }
 
   const sync = async (provider: ProviderId) => {
+    if (!canSync) return
     setBusy(`sync-${provider}`); setError('')
     try { applySnapshot(await api<Snapshot>(`/api/integrations/${provider}/sync`, { method: 'POST' })) }
     catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Sync failed.') }
@@ -65,6 +67,7 @@ export default function IntegrationPage({ initialWorkspace, onWorkspace }: { ini
   }
 
   const sandboxSync = async (provider: ProviderId) => {
+    if (!canSync) return
     setBusy(`sandbox-${provider}`); setError('')
     try { applySnapshot(await api<Snapshot>(`/api/integrations/${provider}/sandbox-sync`, { method: 'POST' })) }
     catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Sandbox sync failed.') }
@@ -72,6 +75,7 @@ export default function IntegrationPage({ initialWorkspace, onWorkspace }: { ini
   }
 
   const syncAll = async () => {
+    if (!canSync) return
     setBusy('sync-all'); setError('')
     try {
       const next = await api<Snapshot & { errors?: Array<{ provider: string; error: string }> }>('/api/integrations/sync-all', { method: 'POST' })
@@ -82,6 +86,7 @@ export default function IntegrationPage({ initialWorkspace, onWorkspace }: { ini
   }
 
   const disconnect = async (provider: ProviderId) => {
+    if (!canManage) return
     if (!window.confirm('Disconnect this provider and remove its synced records from Leakline?')) return
     setBusy(`disconnect-${provider}`); setError('')
     try { applySnapshot(await api<Snapshot>(`/api/integrations/${provider}/disconnect`, { method: 'POST' })) }
@@ -90,7 +95,7 @@ export default function IntegrationPage({ initialWorkspace, onWorkspace }: { ini
   }
 
   return <section className="integrations-page">
-    <div className="page-heading integrations-heading"><div><p>Version 2 · live data</p><h1>Connect your revenue stack.</h1><span>Credentials are sent only to the local Leakline backend and encrypted at rest.</span></div><div className="integration-heading-actions">{connected > 1 && <button disabled={Boolean(busy)} onClick={syncAll}><RefreshCw size={14} className={busy === 'sync-all' ? 'spin' : ''} /> Sync all</button>}<div className="integration-summary"><strong>{connected}/4</strong><span>connected</span><em>{totalRecords} synced records</em></div></div></div>
+    <div className="page-heading integrations-heading"><div><p>Continuous monitoring</p><h1>Connect your revenue stack.</h1><span>{canManage ? 'Connected records are normalised into one analysis layer. Credentials are encrypted at rest.' : canSync ? 'You can refresh connected sources, but only admins can add or remove credentials.' : 'This is a read-only view of the connected sources behind this workspace.'}</span></div><div className="integration-heading-actions">{connected > 1 && canSync && <button disabled={Boolean(busy)} onClick={syncAll}><RefreshCw size={14} className={busy === 'sync-all' ? 'spin' : ''} /> Sync all</button>}<div className="integration-summary"><strong>{connected}/4</strong><span>sources connected</span><em>{totalRecords} records synced</em></div></div></div>
     {error && !selected && <div className="integration-error"><AlertTriangle size={17} /><span>{error}</span><button onClick={() => setError('')}><X size={15} /></button></div>}
     {busy === 'loading' && !snapshot.statuses.length ? <div className="integration-loading"><RefreshCw size={22} className="spin" /><span>Checking integration service…</span></div> : <div className="integration-grid">
       {snapshot.statuses.map((status) => {
@@ -99,8 +104,8 @@ export default function IntegrationPage({ initialWorkspace, onWorkspace }: { ini
         return <article className={`integration-card ${status.connected ? 'connected' : ''}`} key={status.id}>
           <div className="integration-card-top"><span className="provider-icon"><Icon size={20} /></span><span className={`connection-state ${status.mode === 'sandbox' ? 'sandbox' : status.connected ? 'healthy' : status.available ? 'idle' : 'blocked'}`}>{status.mode === 'sandbox' ? <><FlaskConical size={13} /> Sandbox</> : status.connected ? <><CheckCircle2 size={13} /> Connected</> : status.available ? 'Not connected' : 'Setup required'}</span></div>
           <span className="eyebrow">{status.category}</span><h2>{status.label}</h2><p>{status.description}</p>
-          {status.connected ? <div className="connection-detail"><strong>{status.accountLabel ?? status.label}</strong><span>{recordCount} records · {status.lastSyncAt ? `synced ${new Date(status.lastSyncAt).toLocaleString('en-GB')}` : 'not synced yet'}</span>{status.mode === 'sandbox' && <small>Uses realistic sample payloads. Replace this with a live connection when credentials are available.</small>}{status.lastError && <em>{status.lastError}</em>}</div> : !status.available && <div className="connection-detail blocked"><strong>App credentials needed</strong><span>Add a Google OAuth client ID and secret once, then connect your Calendar account.</span></div>}
-          <div className="integration-actions">{status.connected ? <><button className="sync-button" disabled={Boolean(busy)} onClick={() => sync(status.id)}><RefreshCw size={14} className={busy === `sync-${status.id}` || busy === `sandbox-${status.id}` ? 'spin' : ''} /> Sync now</button><button className="disconnect-button" disabled={Boolean(busy)} onClick={() => disconnect(status.id)}><Unplug size={14} /> Disconnect</button></> : <><button className="connect-button" disabled={Boolean(busy)} onClick={() => { setSelected(status); setForm({}); setError('') }}><Link2 size={14} /> {status.id === 'google-calendar' && !status.available ? 'Configure Google' : `Connect ${status.label}`}</button><button className="sandbox-button" disabled={Boolean(busy)} onClick={() => sandboxSync(status.id)}><FlaskConical size={14} /> Sandbox</button></>}</div>
+          {status.connected ? <div className="connection-detail"><strong>{status.accountLabel ?? status.label}</strong><span>{recordCount} records · {status.lastSyncAt ? `synced ${new Date(status.lastSyncAt).toLocaleString('en-GB')}` : 'not synced yet'}</span>{status.mode === 'sandbox' && <small>Uses realistic sample data. Replace this with a live connection when credentials are available.</small>}{status.lastError && <em>{status.lastError}</em>}</div> : !status.available && <div className="connection-detail blocked"><strong>Connection credentials needed</strong><span>Add a Google OAuth client ID and secret once, then connect Calendar.</span></div>}
+          <div className="integration-actions">{status.connected ? <><button className="sync-button" disabled={Boolean(busy) || !canSync} onClick={() => sync(status.id)}><RefreshCw size={14} className={busy === `sync-${status.id}` || busy === `sandbox-${status.id}` ? 'spin' : ''} /> Sync now</button><button className="disconnect-button" disabled={Boolean(busy) || !canManage} onClick={() => disconnect(status.id)}><Unplug size={14} /> Disconnect</button></> : <><button className="connect-button" disabled={Boolean(busy) || !canManage} onClick={() => { setSelected(status); setForm({}); setError('') }}><Link2 size={14} /> {status.id === 'google-calendar' && !status.available ? 'Configure Google' : `Connect ${status.label}`}</button><button className="sandbox-button" disabled={Boolean(busy) || !canSync} onClick={() => sandboxSync(status.id)}><FlaskConical size={14} /> Sandbox</button></>}</div>
         </article>
       })}
     </div>}

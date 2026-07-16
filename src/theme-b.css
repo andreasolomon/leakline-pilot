@@ -191,6 +191,8 @@ header { background: rgba(248, 251, 252, .9); border-bottom-color: #d4e0e6; }
 .clear-import { width: 100%; border: 0; background: transparent; color: #78909b; font-size: 9px; margin-top: 10px; cursor: pointer; }
 .spin { animation: csv-spin 1s linear infinite; } @keyframes csv-spin { to { transform: rotate(360deg); } }
 .data-confidence { margin: 0 0 14px; }
+.bottom-grid + .data-confidence { margin-top: 12px; }
+.demo-path.overview-resource { margin: 12px 0 14px; }
 .data-confidence.high { border-color: #a9dfcc; box-shadow: inset 3px 0 #33bf8e, 0 5px 20px #0925360a; }
 .data-confidence.medium { border-color: #ecd0a8; box-shadow: inset 3px 0 #d39835, 0 5px 20px #0925360a; }
 .data-confidence.low { border-color: #edbbb5; box-shadow: inset 3px 0 #d2594c, 0 5px 20px #0925360a; }

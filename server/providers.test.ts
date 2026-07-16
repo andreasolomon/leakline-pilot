@@ -66,6 +66,43 @@ describe('Version 2 provider adapters', () => {
 })
 
 describe('Version 2 service boundary', () => {
+  it('tracks a shared recovery case from detection through recovered revenue', async () => {
+    process.env.LEAKLINE_AUTH_ENABLED = 'true'
+    process.env.LEAKLINE_INVITE_CODE = 'pilot-secret'
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-recovery-cases-'))
+    try {
+      const app = createApp(new EncryptedStore(directory))
+      const operator = request.agent(app)
+      await operator.post('/api/auth/signup').send({ name: 'Andrea', email: 'operator@example.com', password: 'secure-pass-123', inviteCode: 'pilot-secret' }).expect(201)
+
+      const synced = await operator.post('/api/recovery-cases/sync').send({ cases: [{
+        leakId: 106,
+        type: 'Booking gap',
+        title: '10 opted-in leads have not booked',
+        description: 'Ten leads passed the booking window.',
+        impact: 3000,
+        affectedRecords: 10,
+        severity: 'critical',
+        suggestedOwner: 'Setter / SDR',
+        suggestedActions: ['Work the queue within 24 hours', 'Run a three-touch sequence'],
+      }] }).expect(200)
+      expect(synced.body.cases[0]).toMatchObject({ status: 'detected', owner: 'Setter / SDR', recoveredAmount: 0 })
+
+      const recoveryCase = synced.body.cases[0]
+      const assigned = await operator.patch(`/api/recovery-cases/${recoveryCase.id}`).send({ owner: 'Maya Setter', deadline: '2026-07-20' }).expect(200)
+      expect(assigned.body.case).toMatchObject({ status: 'assigned', owner: 'Maya Setter', deadline: '2026-07-20' })
+
+      await operator.patch(`/api/recovery-cases/${recoveryCase.id}`).send({ actionId: recoveryCase.actions[0].id, actionCompleted: true }).expect(200)
+      await operator.patch(`/api/recovery-cases/${recoveryCase.id}`).send({ note: 'Five leads contacted; two booked.' }).expect(200)
+      const resolved = await operator.patch(`/api/recovery-cases/${recoveryCase.id}`).send({ status: 'resolved', resolution: 'Two appointments booked and one sale collected.', recoveredAmount: 1500 }).expect(200)
+      expect(resolved.body.case).toMatchObject({ status: 'resolved', recoveredAmount: 1500, resolution: 'Two appointments booked and one sale collected.' })
+      expect(resolved.body.case.activity.length).toBeGreaterThanOrEqual(5)
+
+      const listed = await operator.get('/api/recovery-cases').expect(200)
+      expect(listed.body.cases[0]).toMatchObject({ id: recoveryCase.id, status: 'resolved', recoveredAmount: 1500 })
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  })
+
   it('protects pilot data behind invite-only login when auth is enabled', async () => {
     process.env.LEAKLINE_AUTH_ENABLED = 'true'
     process.env.LEAKLINE_INVITE_CODE = 'pilot-secret'
@@ -81,7 +118,7 @@ describe('Version 2 service boundary', () => {
 
       const created = await agent.post('/api/auth/signup').send({ name: 'Client', email: 'client@example.com', password: 'secure-pass-123', inviteCode: 'pilot-secret' })
       expect(created.status).toBe(201)
-      expect(created.body.user).toMatchObject({ email: 'client@example.com', name: 'Client', role: 'admin', status: 'active' })
+      expect(created.body.user).toMatchObject({ email: 'client@example.com', name: 'Client', role: 'owner', status: 'active' })
 
       const integrations = await agent.get('/api/integrations')
       expect(integrations.status).toBe(200)
@@ -101,8 +138,8 @@ describe('Version 2 service boundary', () => {
       const admin = request.agent(app)
       await admin.post('/api/auth/signup').send({ name: 'Andrea', email: 'admin@example.com', password: 'secure-pass-123', inviteCode: 'pilot-secret' }).expect(201)
 
-      const created = await admin.post('/api/admin/users').send({ name: 'Client Viewer', email: 'viewer@example.com', password: 'client-pass-123', role: 'member' }).expect(201)
-      expect(created.body.user).toMatchObject({ email: 'viewer@example.com', role: 'member', status: 'active' })
+      const created = await admin.post('/api/admin/users').send({ name: 'Client Viewer', email: 'viewer@example.com', password: 'client-pass-123', role: 'viewer' }).expect(201)
+      expect(created.body.user).toMatchObject({ email: 'viewer@example.com', role: 'viewer', status: 'active' })
 
       const users = await admin.get('/api/admin/users').expect(200)
       expect(users.body.users).toHaveLength(2)
@@ -110,6 +147,8 @@ describe('Version 2 service boundary', () => {
       const member = request.agent(app)
       await member.post('/api/auth/login').send({ email: 'viewer@example.com', password: 'client-pass-123' }).expect(200)
       await member.get('/api/admin/users').expect(403)
+      await member.get('/api/integrations').expect(200)
+      await member.post('/api/integrations/highlevel/sandbox-sync').expect(403)
 
       await admin.patch(`/api/admin/users/${created.body.user.id}`).send({ status: 'disabled' }).expect(200)
       await member.get('/api/integrations').expect(401)
@@ -121,7 +160,92 @@ describe('Version 2 service boundary', () => {
 
       const self = users.body.users.find((user: { email: string }) => user.email === 'admin@example.com')
       await admin.patch(`/api/admin/users/${self.id}`).send({ status: 'disabled' }).expect(403)
-      await admin.patch(`/api/admin/users/${self.id}`).send({ role: 'member' }).expect(403)
+      await admin.patch(`/api/admin/users/${self.id}`).send({ role: 'manager' }).expect(403)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('creates one-time invite links and accepts users into the right workspace', async () => {
+    process.env.LEAKLINE_AUTH_ENABLED = 'true'
+    process.env.LEAKLINE_INVITE_CODE = 'pilot-secret'
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-invites-'))
+    try {
+      const app = createApp(new EncryptedStore(directory))
+      const admin = request.agent(app)
+      await admin.post('/api/auth/signup').send({ name: 'Andrea', email: 'admin@example.com', password: 'secure-pass-123', inviteCode: 'pilot-secret' }).expect(201)
+
+      const created = await admin.post('/api/admin/invites').send({ email: 'manager@example.com', role: 'manager', expiresInDays: 7 }).expect(201)
+      expect(created.body.invite).toMatchObject({ email: 'manager@example.com', role: 'manager', status: 'pending' })
+      expect(created.body.invite.token).toEqual(expect.any(String))
+      expect(created.body.invite.tokenHash).toBeUndefined()
+
+      await admin.post('/api/admin/invites').send({ email: 'manager@example.com', role: 'manager' }).expect(403)
+
+      const token = created.body.invite.token as string
+      const preview = await request(app).get(`/api/invites/${token}`).expect(200)
+      expect(preview.body.invite).toMatchObject({ email: 'manager@example.com', role: 'manager' })
+      expect(preview.body.invite.workspaces[0]).toMatchObject({ clientName: 'Ascend Growth Partners' })
+
+      const invited = request.agent(app)
+      const accepted = await invited.post(`/api/invites/${token}/accept`).send({ name: 'Pilot Manager', password: 'manager-pass-123' }).expect(201)
+      expect(accepted.body.user).toMatchObject({ email: 'manager@example.com', name: 'Pilot Manager', role: 'manager' })
+
+      await invited.get('/api/integrations').expect(200)
+      await request(app).get(`/api/invites/${token}`).expect(404)
+      await request(app).post(`/api/invites/${token}/accept`).send({ name: 'Second Try', password: 'manager-pass-123' }).expect(400)
+
+      const invites = await admin.get('/api/admin/invites').expect(200)
+      expect(invites.body.invites[0]).toMatchObject({ email: 'manager@example.com', status: 'accepted' })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('enforces invite creation permissions by role', async () => {
+    process.env.LEAKLINE_AUTH_ENABLED = 'true'
+    process.env.LEAKLINE_INVITE_CODE = 'pilot-secret'
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-invite-roles-'))
+    try {
+      const app = createApp(new EncryptedStore(directory))
+      const owner = request.agent(app)
+      await owner.post('/api/auth/signup').send({ name: 'Andrea', email: 'owner@example.com', password: 'secure-pass-123', inviteCode: 'pilot-secret' }).expect(201)
+      await owner.post('/api/admin/users').send({ name: 'Client Admin', email: 'client-admin@example.com', password: 'client-admin-pass-123', role: 'admin' }).expect(201)
+      await owner.post('/api/admin/users').send({ name: 'Client Viewer', email: 'client-viewer@example.com', password: 'client-viewer-pass-123', role: 'viewer' }).expect(201)
+
+      const clientAdmin = request.agent(app)
+      await clientAdmin.post('/api/auth/login').send({ email: 'client-admin@example.com', password: 'client-admin-pass-123' }).expect(200)
+      await clientAdmin.post('/api/admin/invites').send({ email: 'manager-from-admin@example.com', role: 'manager' }).expect(201)
+      await clientAdmin.post('/api/admin/invites').send({ email: 'admin-from-admin@example.com', role: 'admin' }).expect(403)
+      await clientAdmin.get('/api/admin/marketing').expect(403)
+      await owner.get('/api/admin/marketing').expect(200)
+
+      const viewer = request.agent(app)
+      await viewer.post('/api/auth/login').send({ email: 'client-viewer@example.com', password: 'client-viewer-pass-123' }).expect(200)
+      await viewer.post('/api/admin/invites').send({ email: 'viewer-created@example.com', role: 'viewer' }).expect(403)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('revokes pending invites before they can be accepted', async () => {
+    process.env.LEAKLINE_AUTH_ENABLED = 'true'
+    process.env.LEAKLINE_INVITE_CODE = 'pilot-secret'
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-revoked-invite-'))
+    try {
+      const app = createApp(new EncryptedStore(directory))
+      const admin = request.agent(app)
+      await admin.post('/api/auth/signup').send({ name: 'Andrea', email: 'admin@example.com', password: 'secure-pass-123', inviteCode: 'pilot-secret' }).expect(201)
+
+      const created = await admin.post('/api/admin/invites').send({ email: 'viewer@example.com', role: 'viewer' }).expect(201)
+      const token = created.body.invite.token as string
+      await admin.post(`/api/admin/invites/${created.body.invite.id}/revoke`).expect(200)
+
+      await request(app).get(`/api/invites/${token}`).expect(404)
+      await request(app).post(`/api/invites/${token}/accept`).send({ name: 'Revoked Viewer', password: 'viewer-pass-123' }).expect(400)
+
+      const invites = await admin.get('/api/admin/invites').expect(200)
+      expect(invites.body.invites[0]).toMatchObject({ email: 'viewer@example.com', status: 'revoked' })
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
@@ -178,6 +302,52 @@ describe('Version 2 service boundary', () => {
       const integrations = await request(app).get('/api/integrations')
       expect(integrations.status).toBe(200)
       expect(integrations.body.statuses).toHaveLength(4)
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  })
+
+  it('captures landing page audit applications in the encrypted store', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-leads-'))
+    try {
+      const store = new EncryptedStore(directory)
+      const app = createApp(store)
+      const submitted = await request(app).post('/api/leads').send({
+        name: 'Andrea Buyer',
+        email: 'Buyer@Example.com',
+        company: 'Revenue Team Inc',
+        phone: '+1 555 0100',
+        role: 'Founder',
+      }).expect(201)
+      expect(submitted.body.leadId).toMatch(/^lead-/)
+      const captured = await store.read()
+      expect(captured.leadApplications[0]).toMatchObject({
+        email: 'buyer@example.com',
+        phone: '+1 555 0100',
+        company: 'Revenue Team Inc',
+        source: 'landing-page',
+        status: 'new',
+      })
+
+      await request(app).post(`/api/leads/${submitted.body.leadId}/qualify`).send({
+        website: 'https://example.com',
+        monthlyBookedCalls: '75–150',
+        offerPrice: '$5k–$15k',
+        crm: 'GoHighLevel + Stripe',
+        suspectedLeak: 'Leads opt in but do not book',
+        notes: 'We want to find what is leaking before adding spend.',
+      }).expect(200)
+      const saved = await store.read()
+      expect(saved.leadApplications[0]).toMatchObject({
+        email: 'buyer@example.com',
+        company: 'Revenue Team Inc',
+        website: 'https://example.com',
+        status: 'qualified',
+        suspectedLeak: 'Leads opt in but do not book',
+      })
+
+      await request(app).post('/api/marketing-events').send({ event: 'application_completed', path: '/', leadId: submitted.body.leadId }).expect(202)
+      const marketing = await request(app).get('/api/admin/marketing').expect(200)
+      expect(marketing.body.leads[0]).toMatchObject({ email: 'buyer@example.com', status: 'qualified' })
+      expect(marketing.body.events[0]).toMatchObject({ event: 'application_completed', path: '/', leadId: submitted.body.leadId })
     } finally { await rm(directory, { recursive: true, force: true }) }
   })
 

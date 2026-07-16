@@ -37,7 +37,7 @@ const preflight = [
   { icon: CalendarDays, category: 'Calendar', needs: 'Booked calls, attended calls, no-shows', why: 'Finds the gap between interest, booked calls, and actual sales conversations.' },
   { icon: CreditCard, category: 'Payments', needs: 'Paid, failed, refunded, overdue', why: 'Separates confirmed losses from money that may still be recovered.' },
   { icon: AudioLines, category: 'Calls', needs: 'Recordings, summaries, objections, closer', why: 'Adds context behind missed sales, objections, and coaching patterns.' },
-  { icon: Users, category: 'Team', needs: 'Closer name, calls taken, cash collected, close rate', why: 'Makes performance comparison fair enough to act on.' },
+  { icon: Users, category: 'Team', needs: 'Closer name, calls taken, cash collected, close rate', why: 'Helps LeakLine distinguish a real conversion leak from differences in lead mix or sample size.' },
 ]
 
 type ImportPageProps = {
@@ -118,15 +118,15 @@ export default function ImportPage({ onApply, onClear, onOpenIntegrations, onSan
 
   return <section className="import-page">
     <div className="page-heading section-heading import-heading">
-      <div><p>Connect or import</p><h1>Connect or Import Data</h1><span>LeakLine can connect directly to your tools, or start from exports if you do not want to connect yet.</span></div>
+      <div><p>Connect or import</p><h1>Connect or Import Data</h1><span>Connect your operating tools directly, or start from exports. LeakLine normalises both paths before analysing the funnel and prioritising revenue issues.</span></div>
       <span className="privacy-note"><ShieldCheck size={15} /> Local-first demo workspace</span>
     </div>
 
     <section className="connect-import-hero panel">
       <div>
-        <span className="eyebrow"><Link2 size={14} /> One data path</span>
-        <h2>Start with the cleanest source available.</h2>
-        <p>For a live pilot, connect the tools. For a low-friction first look, upload CSV exports. For a polished demo, load the sample high-ticket workspace and show what to fix before adding more volume.</p>
+        <span className="eyebrow"><Link2 size={14} /> Detection input</span>
+        <h2>Give LeakLine the cleanest evidence available.</h2>
+        <p>Connect live tools for continuous detection, upload exports for a manual audit, or load the sample workspace to preview how raw records become prioritised recovery cases.</p>
       </div>
       <div className="connect-actions">
         <button className="hero-primary" onClick={previewSandbox} disabled={sandboxing}>
@@ -139,7 +139,7 @@ export default function ImportPage({ onApply, onClear, onOpenIntegrations, onSan
     </section>
 
     <section className="preflight-panel panel">
-      <div className="panel-head"><div><span className="eyebrow"><ShieldCheck size={14} /> Integration readiness</span><h2>What LeakLine needs before the numbers are trusted</h2></div></div>
+      <div className="panel-head"><div><span className="eyebrow"><ShieldCheck size={14} /> Detection readiness</span><h2>Evidence LeakLine needs before a leak is trusted</h2></div></div>
       <div className="preflight-grid">
         {preflight.map(({ icon: Icon, category, needs, why }) => <article className="preflight-card" key={category}>
           <span><Icon size={17} /></span>
@@ -150,7 +150,7 @@ export default function ImportPage({ onApply, onClear, onOpenIntegrations, onSan
 
     <div className="import-layout">
       <div className="upload-stack">
-        <div className="upload-section-title"><span className="eyebrow"><FileSpreadsheet size={14} /> CSV fallback</span><h2>Import exports if the prospect is not ready to connect yet.</h2></div>
+        <div className="upload-section-title"><span className="eyebrow"><FileSpreadsheet size={14} /> Manual detection input</span><h2>Import exports when a live connection is not available yet.</h2></div>
         {kinds.map((kind, index) => {
           const config = datasetConfig[kind]
           const imported = workspace[kind]
@@ -177,10 +177,10 @@ export default function ImportPage({ onApply, onClear, onOpenIntegrations, onSan
       </div>
 
       <aside className="import-summary panel">
-        <span className="eyebrow"><FileSpreadsheet size={14} /> Data summary</span>
-        <h2>{summary.files ? `${summary.records} records ready` : 'Start with a connection or file'}</h2>
-        <p>You do not need every source to begin. More linked datasets produce stronger alerts and higher confidence.</p>
-        <div className="summary-stats"><div><strong>{summary.files}/5</strong><span>datasets</span></div><div><strong>{summary.records}</strong><span>records</span></div><div><strong>{alerts.length}</strong><span>alerts</span></div></div>
+        <span className="eyebrow"><FileSpreadsheet size={14} /> Detection readiness</span>
+        <h2>{summary.files ? `${summary.records} records ready for detection` : 'Add evidence to begin detecting leaks'}</h2>
+        <p>You do not need every source to begin. Each additional linked dataset improves the evidence behind a detection and the confidence of its recovery estimate.</p>
+        <div className="summary-stats"><div><strong>{summary.files}/5</strong><span>sources</span></div><div><strong>{summary.records}</strong><span>records checked</span></div><div><strong>{alerts.length}</strong><span>leaks detected</span></div></div>
         {sampleStatuses.length > 0 && <div className="sample-status-list">
           {sampleStatuses.map((status) => <span key={status}><CheckCircle2 size={14} /> {status}</span>)}
         </div>}
@@ -188,11 +188,11 @@ export default function ImportPage({ onApply, onClear, onOpenIntegrations, onSan
         {summary.issues > 0 && <div className="issue-note"><AlertTriangle size={15} /><span>{summary.issues} parsing issue{summary.issues === 1 ? '' : 's'} found. Valid rows can still be analysed.</span></div>}
         <div className="alert-preview">
           <span>Detected so far</span>
-          {alerts.length ? alerts.slice(0, 4).map((alert) => <div key={alert.id}><i className={alert.severity} /><span>{alert.title}</span><strong>${alert.impact.toLocaleString('en-US')}</strong></div>) : <p>No alerts yet. Connect a source, load the sample workspace, or upload a CSV to begin.</p>}
+          {alerts.length ? alerts.slice(0, 4).map((alert) => <div key={alert.id}><i className={alert.severity} /><span>{alert.title}</span><strong>${alert.impact.toLocaleString('en-US')}</strong></div>) : <p>No leaks detected yet. Connect a source, load the sample workspace, or upload a CSV to begin.</p>}
         </div>
-        <button className="secondary-button demo-data-button" onClick={loadDemoWorkspace}>Load sample CSV demo</button>
-        <p className="demo-data-note">Use this for a reliable walkthrough when live integrations are not connected yet.</p>
-        <button className="primary-button analyse-button" disabled={!summary.records} onClick={() => onApply(workspace, alerts, sampleStatuses.some((status) => status.includes('connected')) ? 'sandbox' : 'exports')}>Open overview</button>
+        <button className="secondary-button demo-data-button" onClick={loadDemoWorkspace}>Load sample recovery cases</button>
+        <p className="demo-data-note">Use this to demonstrate detection, prioritisation and recovery work without live credentials.</p>
+        <button className="primary-button analyse-button" disabled={!summary.records} onClick={() => onApply(workspace, alerts, sampleStatuses.some((status) => status.includes('connected')) ? 'sandbox' : 'exports')}>Run leak detection</button>
         {summary.records > 0 && <button className="clear-import" onClick={() => { setWorkspace({}); setSampleStatuses([]); onClear?.() }}>Clear imported files</button>}
       </aside>
     </div>

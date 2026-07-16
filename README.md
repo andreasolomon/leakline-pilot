@@ -1,6 +1,6 @@
 # Leakline
 
-Leakline is a revenue-leak dashboard for high-ticket sales teams. Version 1 supports normalized CSV imports; Version 2 adds live GoHighLevel, Google Calendar, Stripe and Fathom connections behind an encrypted local backend.
+Leakline is a revenue-leak dashboard for high-ticket offer owners and revenue operators. Version 1 supports normalized CSV imports; Version 2 adds live GoHighLevel, Google Calendar, Stripe and Fathom connections behind an encrypted local backend.
 
 ## Run locally
 
@@ -67,6 +67,7 @@ Required Render environment values:
 APP_BASE_URL=https://your-render-service.onrender.com
 LEAKLINE_ENCRYPTION_KEY=<64-character-hex-key>
 LEAKLINE_INVITE_CODE=<private-code-you-send-to-the-client>
+VITE_PUBLIC_CONTACT_EMAIL=<public-contact-email>
 SESSION_DAYS=30
 ```
 
@@ -141,6 +142,8 @@ Sandbox mode is useful for product testing, but it is not a substitute for final
 - Each client workspace has separate connected credentials, synced data, calls, imported CSV cache, and alert review state.
 - Integration state is encrypted with AES-256-GCM.
 - Set a stable 64-character hexadecimal `LEAKLINE_ENCRYPTION_KEY` in deployed environments.
+- Set `VITE_PUBLIC_CONTACT_EMAIL` during the production build to show a direct contact email. Until it is configured, public Contact links return visitors to the audit application form.
+- Landing-page applications and first-party conversion events are available only to the LeakLine owner under `/app` → Admin.
 - Without a configured key, Leakline generates a local key in `.data/local.key` with owner-only permissions.
 - Google OAuth uses a short-lived state value and read-only scope.
 - `.env`, `.data`, build outputs and dependencies are ignored by Git.

@@ -1,0 +1,16 @@
+<svg width="980" height="280" viewBox="0 0 980 280" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">LeakLine logo final candidate cream</title>
+  <desc id="desc">LeakLine wordmark with funnel leak icon and the tagline Find the revenue leaks before you scale harder.</desc>
+  <rect width="980" height="280" rx="36" fill="#F7F4ED"/>
+  <g transform="translate(60 46)">
+    <rect width="188" height="188" rx="46" fill="#102D3A"/>
+    <path d="M48 55C48 49.4772 52.4772 45 58 45H130C135.523 45 140 49.4772 140 55V62C140 64.2969 139.209 66.5237 137.76 68.3066L108 104.93V137C108 142.523 103.523 147 98 147H90C84.4772 147 80 142.523 80 137V104.93L50.2399 68.3066C48.7913 66.5237 48 64.2969 48 62V55Z" fill="#F7F4ED"/>
+    <path d="M62 61H126" stroke="#10B981" stroke-width="9" stroke-linecap="round"/>
+    <path d="M77 81H111" stroke="#10B981" stroke-width="9" stroke-linecap="round"/>
+    <path d="M94 151C83.2 164.2 79.9 174.4 94 181C108.1 174.4 104.8 163.2 94 151Z" fill="#FF6B4A"/>
+  </g>
+  <g transform="translate(300 72)">
+    <text x="0" y="68" fill="#102D3A" font-family="Manrope, Inter, Arial, sans-serif" font-size="76" font-weight="850" letter-spacing="-3.8">LeakLine</text>
+    <text x="3" y="115" fill="#627174" font-family="DM Sans, Inter, Arial, sans-serif" font-size="22" font-weight="700" letter-spacing=".35">FIND THE REVENUE LEAKS BEFORE YOU SCALE HARDER</text>
+  </g>
+</svg>

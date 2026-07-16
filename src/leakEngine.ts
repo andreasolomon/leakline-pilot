@@ -51,11 +51,21 @@ export function detectLeaks(snapshot: DemoSnapshot): Leak[] {
   if (unbookedLeads > 0) detected.push({
     id: 6, type: 'Booking gap', title: `${unbookedLeads} opted-in leads have not booked`,
     description: `${snapshot.optInBooking.booked} of ${snapshot.optInBooking.optedIn} new leads booked within ${snapshot.optInBooking.bookingWindowHours} hours—a ${bookingRate}% opt-in-to-booking rate.`,
-    impact: snapshot.optInBooking.estimatedImpact, severity: 'critical', owner: 'Growth',
+    impact: snapshot.optInBooking.estimatedImpact, severity: 'critical', owner: 'Setter / SDR',
     count: unbookedLeads, action: 'Review unbooked leads', periodLabel: 'This month',
     evidence: [`${snapshot.optInBooking.optedIn} leads opted in`, `${snapshot.optInBooking.booked} booked within ${snapshot.optInBooking.bookingWindowHours} hours`, `${unbookedLeads} reached the end of the booking window without an appointment`],
-    suggestedActions: ['Send an immediate booking reminder', 'Compare booking rate by lead source', 'Contact high-intent leads who did not choose a time'],
+    suggestedActions: [`Work the ${unbookedLeads}-lead unbooked queue within 24 hours, starting with the newest high-intent opt-ins`, 'Run a three-touch booking recovery sequence across phone, SMS and email over the next 48 hours', 'Record recovered bookings against this case and compare the 7-day booking rate by source'],
     breakdown: [{ label: 'All opt-ins', current: `${bookingRate}%`, baseline: '70%', signal: `${bookingRate - 70} pts` }],
+    relatedRecords: [
+      { id: 'lead-demo-101', name: 'Sofia Bennett', email: 'sofia.bennett@example.com', source: 'Meta Campaign B', owner: 'Ava Brooks', status: '48h booking window passed', createdAt: '2026-06-20T09:14:00Z' },
+      { id: 'lead-demo-102', name: 'Marcus Reed', email: 'marcus.reed@example.com', source: 'YouTube Organic', owner: 'Noah Carter', status: 'SMS sent · no response', createdAt: '2026-06-20T08:42:00Z' },
+      { id: 'lead-demo-103', name: 'Elena Woods', email: 'elena.woods@example.com', source: 'Webinar', owner: 'Ava Brooks', status: 'Booking page viewed', createdAt: '2026-06-19T18:05:00Z' },
+      { id: 'lead-demo-104', name: 'Daniel Price', email: 'daniel.price@example.com', source: 'Meta Campaign B', owner: 'Noah Carter', status: 'Call attempt due', createdAt: '2026-06-19T16:28:00Z' },
+      { id: 'lead-demo-105', name: 'Naomi Clarke', email: 'naomi.clarke@example.com', source: 'Referral', owner: 'Ava Brooks', status: 'Email opened twice', createdAt: '2026-06-19T13:37:00Z' },
+      { id: 'lead-demo-106', name: 'Isaac Morgan', email: 'isaac.morgan@example.com', source: 'YouTube Organic', owner: 'Noah Carter', status: 'No booking activity', createdAt: '2026-06-18T20:11:00Z' },
+      { id: 'lead-demo-107', name: 'Maya Collins', email: 'maya.collins@example.com', source: 'Meta Campaign B', owner: 'Ava Brooks', status: 'Reminder sequence queued', createdAt: '2026-06-18T17:46:00Z' },
+      { id: 'lead-demo-108', name: 'Owen Hall', email: 'owen.hall@example.com', source: 'Webinar', owner: 'Noah Carter', status: 'Setter follow-up overdue', createdAt: '2026-06-18T12:22:00Z' },
+    ],
   })
 
   if (snapshot.followUps.inactiveQualified > 0) detected.push({
@@ -64,7 +74,7 @@ export function detectLeaks(snapshot: DemoSnapshot): Leak[] {
     impact: snapshot.followUps.estimatedImpact, severity: 'critical', owner: 'Sales team',
     count: snapshot.followUps.inactiveQualified, action: 'Open recovery queue', periodLabel: 'This month',
     evidence: ['12 qualified opportunities have had no activity for at least 3 days', '4 prospects stated a specific decision date', 'Combined open opportunity value is $47,000'],
-    suggestedActions: ['Assign every opportunity a next action and due date', 'Contact the four prospects whose decision date has passed', 'Review the queue with the sales team at the next stand-up'],
+    suggestedActions: ['Assign every opportunity an owner, dated next step and decision deadline before the next sales stand-up', 'Contact the four prospects whose decision date has passed and record the outcome of every attempt', 'Review the queue after 7 days and record pipeline value recovered, lost or still blocked'],
   })
 
   if (snapshot.attendance.campaignShowRate < snapshot.attendance.teamShowRate - 15) detected.push({
@@ -73,7 +83,7 @@ export function detectLeaks(snapshot: DemoSnapshot): Leak[] {
     impact: snapshot.attendance.estimatedImpact, severity: 'critical', owner: 'Growth',
     count: snapshot.attendance.longWaitBookings, action: 'Inspect campaign', periodLabel: 'This month',
     evidence: ['25 of 52 Campaign B bookings attended', '318 of 437 bookings attended across all campaigns', '29 Campaign B calls were booked 5 or more days ahead'],
-    suggestedActions: ['Shorten the booking window for Campaign B', 'Add a 24-hour confirmation step', 'Compare Campaign B qualification answers with higher-showing sources'],
+    suggestedActions: ['Launch a same-day rebooking sequence for Campaign B no-shows and assign every record to a setter', 'Test a shorter booking window plus a 24-hour confirmation step for the next 7 days', 'Record recovered appointments and compare show-rate movement against the current baseline'],
     breakdown: [{ label: 'Meta Campaign B', current: '48%', baseline: '73%', signal: '−25 pts' }, { label: 'YouTube Organic', current: '81%', baseline: '73%', signal: '+8 pts' }, { label: 'Referral', current: '79%', baseline: '73%', signal: '+6 pts' }],
   })
 
@@ -83,7 +93,7 @@ export function detectLeaks(snapshot: DemoSnapshot): Leak[] {
     impact: snapshot.collections.estimatedImpact, severity: 'warning', owner: 'Finance',
     count: snapshot.collections.overdueInstalments, action: 'Review payments', periodLabel: 'This month',
     evidence: ['4 instalments are between 2 and 11 days overdue', '2 accounts have no recovery attempt logged', '$7,200 remains contractually due'],
-    suggestedActions: ['Retry eligible failed payments', 'Assign an owner to the two untouched accounts', 'Write off only after the 30-day recovery deadline'],
+    suggestedActions: ['Retry every eligible failed payment today and assign the untouched accounts to a named owner', 'Contact unresolved accounts within one business day with a payment link or approved plan option', 'Record cash recovered, balances rescheduled and write-offs before closing the case'],
   })
 
   if (snapshot.conversion.currentRate < snapshot.conversion.baselineRate - 5) detected.push({

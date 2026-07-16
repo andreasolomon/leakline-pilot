@@ -1,0 +1,16 @@
+<svg width="920" height="260" viewBox="0 0 920 260" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">LeakLine logo option B</title>
+  <desc id="desc">A funnel mark with a small revenue leak drop next to the LeakLine wordmark.</desc>
+  <rect width="920" height="260" rx="34" fill="#F4F3EF"/>
+  <g transform="translate(58 48)">
+    <rect width="164" height="164" rx="38" fill="#E3F1EC"/>
+    <path d="M35 48 H129 L99 88 V122 H65 V88 L35 48Z" fill="#25241F"/>
+    <path d="M49 63 H115" stroke="#D7E8A6" stroke-width="8" stroke-linecap="round"/>
+    <path d="M62 81 H102" stroke="#D7E8A6" stroke-width="8" stroke-linecap="round"/>
+    <path d="M82 126 C72 138 69 147 82 154 C95 147 92 138 82 126Z" fill="#BB4A3F"/>
+  </g>
+  <g transform="translate(258 70)">
+    <text x="0" y="64" fill="#25241F" font-family="Manrope, DM Sans, Arial, sans-serif" font-size="70" font-weight="800" letter-spacing="-3">LeakLine</text>
+    <text x="4" y="108" fill="#14775A" font-family="DM Sans, Arial, sans-serif" font-size="22" font-weight="700" letter-spacing=".6">FUNNEL LEAK DETECTION FOR HIGH-TICKET TEAMS</text>
+  </g>
+</svg>

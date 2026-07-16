@@ -34,7 +34,7 @@ export default function DesignLab() {
           <div className="concept-frame modern-frame">
             <aside><div className="mini-brand"><ShieldCheck size={13} /> LEAKLINE</div>{['Command', 'Signals', 'Pipeline', 'Actions'].map((item, i) => <span className={i === 0 ? 'selected' : ''} key={item}>{item}</span>)}</aside>
             <main>
-              <div className="modern-welcome"><div><small>REVENUE COMMAND</small><h3>Scale without leaks.</h3></div><span>LIVE DATA</span></div>
+              <div className="modern-welcome"><div><small>REVENUE COMMAND</small><h3>Find the revenue leaks before you scale harder.</h3></div><span>LIVE DATA</span></div>
               <div className="modern-kpis"><div><span>NET RETAINED</span><strong>$156,456</strong><small><ArrowUpRight size={8} /> 8.2%</small></div><div><span>CONFIRMED LOST</span><strong>$5,250</strong><small className="loss">2.8%</small></div><div><span>AT RISK</span><strong>$38,250</strong><small>5 open signals</small></div></div>
               <div className="modern-panels"><section><header><span><BarChart3 size={9} /> Revenue integrity</span><b>$k</b></header><MiniChart modern /></section><section><header><span><AlertTriangle size={9} /> Live signals</span><b>05</b></header><p><i /><b>Follow-up gap</b><small>Critical · $11.7k</small></p><p><i /><b>Show-rate decay</b><small>Critical · $9.8k</small></p></section></div>
             </main>

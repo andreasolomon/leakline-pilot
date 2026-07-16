@@ -59,6 +59,9 @@ export type StoreState = {
   oauthStates: Partial<Record<ProviderId, { value: string; expiresAt: number }>>
   users: UserRecord[]
   sessions: SessionRecord[]
+  invites: InviteRecord[]
+  leadApplications: LeadApplicationRecord[]
+  marketingEvents: MarketingEventRecord[]
 }
 
 export type WorkspaceIntegrationState = {
@@ -68,6 +71,31 @@ export type WorkspaceIntegrationState = {
   workspace: IntegrationWorkspace
   calls: CallRecord[]
   oauthStates: Partial<Record<ProviderId, { value: string; expiresAt: number }>>
+  recoveryCases: RecoveryCaseRecord[]
+}
+
+export type RecoveryCaseStatus = 'detected' | 'assigned' | 'in_progress' | 'resolved'
+
+export type RecoveryCaseRecord = {
+  id: string
+  leakId: number
+  type: string
+  title: string
+  description: string
+  impact: number
+  affectedRecords: number
+  severity: 'critical' | 'warning' | 'opportunity'
+  status: RecoveryCaseStatus
+  owner: string
+  deadline?: string
+  recoveredAmount: number
+  resolution?: string
+  actions: Array<{ id: string; text: string; completed: boolean; completedAt?: string; completedBy?: string }>
+  notes: Array<{ id: string; text: string; createdAt: string; createdBy: string }>
+  activity: Array<{ id: string; type: string; text: string; createdAt: string; createdBy: string }>
+  createdAt: string
+  updatedAt: string
+  resolvedAt?: string
 }
 
 export type WorkspaceRecord = WorkspaceIntegrationState & {
@@ -98,7 +126,7 @@ export type UserRecord = {
   id: string
   name: string
   email: string
-  role: 'admin' | 'member'
+  role: 'owner' | 'admin' | 'manager' | 'viewer'
   status: 'active' | 'disabled'
   passwordHash: string
   passwordSalt: string
@@ -108,6 +136,50 @@ export type UserRecord = {
   disabledAt?: string
   workspaceIds?: string[]
   defaultWorkspaceId?: string
+}
+
+export type InviteRecord = {
+  id: string
+  email: string
+  role: 'admin' | 'manager' | 'viewer'
+  workspaceIds: string[]
+  tokenHash: string
+  createdBy: string
+  createdAt: string
+  expiresAt: string
+  acceptedAt?: string
+  acceptedBy?: string
+  revokedAt?: string
+  revokedBy?: string
+}
+
+export type LeadApplicationRecord = {
+  id: string
+  name: string
+  email: string
+  phone?: string
+  company: string
+  website?: string
+  role?: string
+  monthlyBookedCalls?: string
+  offerPrice?: string
+  crm?: string
+  suspectedLeak?: string
+  notes?: string
+  source: 'landing-page'
+  status: 'new' | 'qualified'
+  createdAt: string
+  qualifiedAt?: string
+}
+
+export type MarketingEventName = 'page_view' | 'apply_click' | 'vsl_click' | 'sample_report_click' | 'client_login_click' | 'application_details_submitted' | 'application_completed'
+
+export type MarketingEventRecord = {
+  id: string
+  event: MarketingEventName
+  path: string
+  createdAt: string
+  leadId?: string
 }
 
 export type SessionRecord = {

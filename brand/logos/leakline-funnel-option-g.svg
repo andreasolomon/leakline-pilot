@@ -1,0 +1,18 @@
+<svg width="980" height="280" viewBox="0 0 980 280" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">LeakLine funnel logo option G</title>
+  <desc id="desc">A dark command-centre style funnel leak icon with sharp LeakLine typography.</desc>
+  <rect width="980" height="280" rx="36" fill="#0F1F24"/>
+  <g transform="translate(60 46)">
+    <rect width="188" height="188" rx="42" fill="#152D34" stroke="#24474F" stroke-width="2"/>
+    <path d="M44 51H144L109 98V132C109 138.627 103.627 144 97 144H91C84.3726 144 79 138.627 79 132V98L44 51Z" fill="#D7E8A6"/>
+    <path d="M64 67H124" stroke="#0F1F24" stroke-width="8" stroke-linecap="round"/>
+    <path d="M80 86H108" stroke="#0F1F24" stroke-width="8" stroke-linecap="round"/>
+    <path d="M94 150C83.2 163.2 79.9 173.4 94 180C108.1 173.4 104.8 163.2 94 150Z" fill="#FF6B4A"/>
+    <circle cx="143" cy="62" r="13" fill="#FF6B4A"/>
+    <path d="M139.5 57.5L147.5 65.5M147.5 57.5L139.5 65.5" stroke="#0F1F24" stroke-width="3.2" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(302 72)">
+    <text x="0" y="68" fill="#F7F4ED" font-family="Manrope, Inter, Arial, sans-serif" font-size="76" font-weight="850" letter-spacing="-3.8">LeakLine</text>
+    <text x="4" y="115" fill="#D7E8A6" font-family="DM Sans, Inter, Arial, sans-serif" font-size="23" font-weight="800" letter-spacing=".35">SPOT LEAKS. PRIORITISE RECOVERY.</text>
+  </g>
+</svg>

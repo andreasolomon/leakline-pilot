@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   filterImportedWorkspace,
+  filterImportedWorkspaceByDateRange,
+  funnelActionCue,
   importedCloserHealth,
   importedDataHealth,
   importedFinancialSummary,
@@ -76,6 +78,27 @@ describe('imported analytics', () => {
       'L3,Latest Lead,2026-01-10',
     ].join('\n'))
     expect(filterImportedWorkspace({ leads }, '7 days').leads?.rows).toHaveLength(2)
+  })
+
+  it('filters imported records to an exact custom date range', () => {
+    const leads = normaliseCsv('leads', 'leads.csv', [
+      'lead_id,full_name,created_date',
+      'L1,Before Range,2026-01-01',
+      'L2,In Range,2026-01-09',
+      'L3,Range End,2026-01-10',
+      'L4,After Range,2026-01-11',
+      'L5,Missing Date,',
+    ].join('\n'))
+    const filtered = filterImportedWorkspaceByDateRange({ leads }, '2026-01-09', '2026-01-10')
+    expect(filtered.leads?.rows.map((row) => row.name)).toEqual(['In Range', 'Range End'])
+  })
+
+  it('turns the largest funnel drop into an owned measurement plan', () => {
+    expect(funnelActionCue('Leads → booked', 12)).toMatchObject({
+      title: 'Tighten the opt-in-to-booking process',
+      owner: 'Setter / SDR manager',
+    })
+    expect(funnelActionCue('Qualified → closed', 5).measure).toContain('Close rate')
   })
 
   it('routes leak actions to the correct workspace view', () => {

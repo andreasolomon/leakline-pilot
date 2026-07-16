@@ -1,0 +1,17 @@
+<svg width="980" height="280" viewBox="0 0 980 280" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">LeakLine funnel logo option H</title>
+  <desc id="desc">A minimal premium line-art funnel with a clear leak drop and refined LeakLine wordmark.</desc>
+  <rect width="980" height="280" rx="36" fill="#FCFBF8"/>
+  <g transform="translate(60 46)">
+    <rect width="188" height="188" rx="46" fill="#FCFBF8" stroke="#DCD8CD" stroke-width="2"/>
+    <path d="M48 54H140L108 95V132C108 139.732 101.732 146 94 146C86.268 146 80 139.732 80 132V95L48 54Z" stroke="#102D3A" stroke-width="12" stroke-linejoin="round"/>
+    <path d="M66 70H122" stroke="#10B981" stroke-width="8" stroke-linecap="round"/>
+    <path d="M80 89H108" stroke="#10B981" stroke-width="8" stroke-linecap="round"/>
+    <path d="M94 153C84.8 164.2 82 173 94 179C106 173 103.2 164.2 94 153Z" fill="#E4573D"/>
+    <path d="M54 158C70 169 89 173 112 170C124 168.4 134 164.8 144 158" stroke="#DCD8CD" stroke-width="6" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(302 74)">
+    <text x="0" y="67" fill="#25241F" font-family="Manrope, Inter, Arial, sans-serif" font-size="76" font-weight="850" letter-spacing="-3.8">LeakLine</text>
+    <text x="4" y="114" fill="#77766E" font-family="DM Sans, Inter, Arial, sans-serif" font-size="23" font-weight="700" letter-spacing=".35">FUNNEL LEAKS TURNED INTO RECOVERY ACTIONS</text>
+  </g>
+</svg>

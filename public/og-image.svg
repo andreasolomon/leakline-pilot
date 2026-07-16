@@ -1,0 +1,16 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="630" fill="#F7F4ED"/>
+  <circle cx="1090" cy="-20" r="360" fill="#E8F6F1"/>
+  <circle cx="30" cy="650" r="270" fill="#FFF0ED"/>
+  <rect x="78" y="76" width="116" height="116" rx="30" fill="#102D3A"/>
+  <path d="M107 111C107 107.686 109.686 105 113 105H159C162.314 105 165 107.686 165 111V116C165 117.37 164.531 118.699 163.672 119.765L146 141.75V161C146 164.314 143.314 167 140 167H132C128.686 167 126 164.314 126 161V141.75L108.328 119.765C107.469 118.699 107 117.37 107 116V111Z" fill="#F7F4ED"/>
+  <path d="M117 117H155" stroke="#10B981" stroke-width="6" stroke-linecap="round"/>
+  <path d="M126 130H146" stroke="#10B981" stroke-width="6" stroke-linecap="round"/>
+  <path d="M136 170C128.5 178.8 127.3 185.5 136 189C144.7 185.5 143.5 178.3 136 170Z" fill="#FF6B4A"/>
+  <text x="224" y="151" fill="#102D3A" font-family="Arial, sans-serif" font-size="70" font-weight="800" letter-spacing="-3">LeakLine</text>
+  <text x="82" y="304" fill="#102D3A" font-family="Arial, sans-serif" font-size="66" font-weight="800" letter-spacing="-2.5">Find the revenue leaks</text>
+  <text x="82" y="379" fill="#102D3A" font-family="Arial, sans-serif" font-size="66" font-weight="800" letter-spacing="-2.5">before you scale harder.</text>
+  <text x="84" y="453" fill="#627174" font-family="Arial, sans-serif" font-size="28" font-weight="500">Revenue leak audits for high-ticket offer operators.</text>
+  <rect x="82" y="506" width="330" height="62" rx="16" fill="#10B981"/>
+  <text x="112" y="547" fill="#06261F" font-family="Arial, sans-serif" font-size="23" font-weight="800">Identify. Prioritise. Recover.</text>
+</svg>

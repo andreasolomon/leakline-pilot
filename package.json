@@ -22,6 +22,7 @@
     "preview:restart": "node scripts/preview.mjs restart",
     "preview:status": "node scripts/preview.mjs status",
     "preview:stop": "node scripts/preview.mjs stop",
+    "demo:full-stats": "npm run preview:stop && npm run build && node --import tsx scripts/setup-demo-workspace.mjs && npm run preview:app",
     "start": "node server-dist/index.js"
   },
   "dependencies": {

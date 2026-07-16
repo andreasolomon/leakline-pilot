@@ -1,0 +1,17 @@
+<svg width="920" height="260" viewBox="0 0 920 260" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">LeakLine logo option A</title>
+  <desc id="desc">A clean revenue line mark with a visible leak gap next to the LeakLine wordmark.</desc>
+  <rect width="920" height="260" rx="34" fill="#FCFBF8"/>
+  <g transform="translate(58 48)">
+    <rect width="164" height="164" rx="38" fill="#25241F"/>
+    <path d="M35 107 C55 93 66 91 83 73 C101 54 113 46 129 47" stroke="#D7E8A6" stroke-width="12" stroke-linecap="round"/>
+    <path d="M126 47 L142 47" stroke="#D7E8A6" stroke-width="12" stroke-linecap="round"/>
+    <circle cx="91" cy="69" r="7" fill="#FCFBF8"/>
+    <path d="M91 83 C88 91 83 97 77 101" stroke="#BB4A3F" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="74" cy="111" r="5" fill="#BB4A3F"/>
+  </g>
+  <g transform="translate(258 70)">
+    <text x="0" y="64" fill="#25241F" font-family="Manrope, DM Sans, Arial, sans-serif" font-size="70" font-weight="800" letter-spacing="-3">LeakLine</text>
+    <text x="4" y="108" fill="#77766E" font-family="DM Sans, Arial, sans-serif" font-size="22" font-weight="600" letter-spacing=".6">FIX REVENUE LEAKS BEFORE YOU SCALE</text>
+  </g>
+</svg>

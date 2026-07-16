@@ -64,6 +64,7 @@ async function waitForHealth() {
 function requireBuildArtifacts() {
   const missing = []
   if (!existsSync(join(root, 'dist', 'index.html'))) missing.push('dist/index.html')
+  if (!existsSync(join(root, 'dist', 'app', 'index.html'))) missing.push('dist/app/index.html')
   if (!existsSync(join(root, 'server-dist', 'index.js'))) missing.push('server-dist/index.js')
   if (missing.length) {
     throw new Error(`Missing build output: ${missing.join(', ')}. Run npm run build first, or use npm run demo.`)
@@ -151,4 +152,3 @@ try {
   console.error(error instanceof Error ? error.message : String(error))
   process.exit(1)
 }
-

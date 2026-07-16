@@ -5,9 +5,16 @@ import type { StoreState, WorkspaceIntegrationState, WorkspaceRecord } from './t
 
 const defaultWorkspaceId = 'workspace-ascend-growth'
 
-const emptyWorkspaceState = (): WorkspaceIntegrationState => ({ credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, calls: [], oauthStates: {} })
+const emptyWorkspaceState = (): WorkspaceIntegrationState => ({ credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, calls: [], oauthStates: {}, recoveryCases: [] })
 
-const emptyState = (): StoreState => ({ workspaces: [], credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, calls: [], oauthStates: {}, users: [], sessions: [] })
+const emptyState = (): StoreState => ({ workspaces: [], credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, calls: [], oauthStates: {}, users: [], sessions: [], invites: [], leadApplications: [], marketingEvents: [] })
+
+function normaliseRole(role: unknown, index: number): StoreState['users'][number]['role'] {
+  if (role === 'admin') return index === 0 ? 'owner' : 'admin'
+  if (role === 'owner' || role === 'manager' || role === 'viewer') return role
+  if (role === 'member') return 'manager'
+  return index === 0 ? 'owner' : 'manager'
+}
 
 function workspaceFromLegacy(input: Partial<StoreState>): WorkspaceRecord {
   return {
@@ -21,6 +28,7 @@ function workspaceFromLegacy(input: Partial<StoreState>): WorkspaceRecord {
     workspace: input.workspace ?? {},
     calls: input.calls ?? [],
     oauthStates: input.oauthStates ?? {},
+    recoveryCases: [],
   }
 }
 
@@ -37,16 +45,20 @@ function normaliseState(input: Partial<StoreState>): StoreState {
     workspace: workspace.workspace ?? {},
     calls: workspace.calls ?? [],
     oauthStates: workspace.oauthStates ?? {},
+    recoveryCases: workspace.recoveryCases ?? [],
   }))
   const fallbackWorkspaceId = state.workspaces[0]?.id ?? defaultWorkspaceId
   state.users = (state.users ?? []).map((user, index) => ({
     ...user,
-    role: user.role ?? (index === 0 ? 'admin' : 'member'),
+    role: normaliseRole(user.role, index),
     status: user.status ?? 'active',
     workspaceIds: user.workspaceIds?.length ? user.workspaceIds : [fallbackWorkspaceId],
     defaultWorkspaceId: user.defaultWorkspaceId && state.workspaces.some((workspace) => workspace.id === user.defaultWorkspaceId) ? user.defaultWorkspaceId : fallbackWorkspaceId,
   }))
   state.sessions = (state.sessions ?? []).map((session) => ({ ...session, activeWorkspaceId: session.activeWorkspaceId ?? state.users.find((user) => user.id === session.userId)?.defaultWorkspaceId ?? fallbackWorkspaceId }))
+  state.invites = state.invites ?? []
+  state.leadApplications = state.leadApplications ?? []
+  state.marketingEvents = state.marketingEvents ?? []
   return state
 }
 
