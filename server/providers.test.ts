@@ -122,7 +122,7 @@ describe('Version 2 service boundary', () => {
 
       const integrations = await agent.get('/api/integrations')
       expect(integrations.status).toBe(200)
-      expect(integrations.body.statuses).toHaveLength(4)
+      expect(integrations.body.statuses).toHaveLength(6)
 
       await agent.post('/api/auth/logout').send({})
       expect((await agent.get('/api/integrations')).status).toBe(401)
@@ -301,11 +301,11 @@ describe('Version 2 service boundary', () => {
       expect((await request(app).get('/api/health')).body).toEqual({ ok: true, version: 2 })
       const integrations = await request(app).get('/api/integrations')
       expect(integrations.status).toBe(200)
-      expect(integrations.body.statuses).toHaveLength(4)
+      expect(integrations.body.statuses).toHaveLength(6)
     } finally { await rm(directory, { recursive: true, force: true }) }
   })
 
-  it('captures landing page audit applications in the encrypted store', async () => {
+  it('captures landing page recovery assessment applications in the encrypted store', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'leakline-leads-'))
     try {
       const store = new EncryptedStore(directory)
@@ -329,11 +329,12 @@ describe('Version 2 service boundary', () => {
 
       await request(app).post(`/api/leads/${submitted.body.leadId}/qualify`).send({
         website: 'https://example.com',
-        monthlyBookedCalls: '75–150',
-        offerPrice: '$5k–$15k',
-        crm: 'GoHighLevel + Stripe',
-        suspectedLeak: 'Leads opt in but do not book',
-        notes: 'We want to find what is leaking before adding spend.',
+        monthlyOverdueVolume: '$10k–$25k',
+        monthlyFailedPayments: '16–30',
+        paymentProvider: 'Stripe',
+        crm: 'GoHighLevel',
+        currentRecoveryProcess: 'Manual CRM tasks and team follow-up',
+        notes: 'We want to prove what gets collected after assisted follow-up.',
       }).expect(200)
       const saved = await store.read()
       expect(saved.leadApplications[0]).toMatchObject({
@@ -341,7 +342,9 @@ describe('Version 2 service boundary', () => {
         company: 'Revenue Team Inc',
         website: 'https://example.com',
         status: 'qualified',
-        suspectedLeak: 'Leads opt in but do not book',
+        monthlyOverdueVolume: '$10k–$25k',
+        paymentProvider: 'Stripe',
+        currentRecoveryProcess: 'Manual CRM tasks and team follow-up',
       })
 
       await request(app).post('/api/marketing-events').send({ event: 'application_completed', path: '/', leadId: submitted.body.leadId }).expect(202)

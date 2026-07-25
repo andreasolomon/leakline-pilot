@@ -1,6 +1,6 @@
 # Leakline
 
-Leakline is a revenue-leak dashboard for high-ticket offer owners and revenue operators. Version 1 supports normalized CSV imports; Version 2 adds live GoHighLevel, Google Calendar, Stripe and Fathom connections behind an encrypted local backend.
+Leakline is an assisted payment-recovery system for high-ticket offer owners and revenue operators. It turns failed and overdue instalments into prioritised recovery cases, prepares approved outreach and replies, tracks promises and follow-ups, and attributes cash recovered after intervention. The broader funnel analysis remains available as supporting evidence.
 
 ## Run locally
 
@@ -12,11 +12,11 @@ npm run dev
 
 Leakline now uses its own local ports so it does not collide with Closer OS:
 
-- Production-style Leakline preview: `http://localhost:8787`
-- Leakline development web server: `http://localhost:8788`
-- Leakline integration/API server: `http://localhost:8787`
+- Production-style payment-recovery preview: `http://localhost:8797`
+- Payment-recovery development web server: `http://localhost:8798`
+- Payment-recovery integration/API server: `http://localhost:8797`
 
-The Vite development app on `8788` proxies `/api` to the integration server on `8787`.
+The Vite development app on `8798` proxies `/api` to the integration server on `8797`.
 
 For the most reliable demo preview:
 
@@ -24,7 +24,7 @@ For the most reliable demo preview:
 npm run demo
 ```
 
-This builds Leakline, starts the production-style app in the background on `http://localhost:8787`, verifies `/api/health`, and writes the preview PID/logs to `.data/preview.pid` and `.data/preview.log`.
+This builds Leakline, starts the production-style app in the background on `http://localhost:8797`, verifies `/api/health`, and writes the preview PID/logs to `.data/preview.pid` and `.data/preview.log`.
 
 Useful preview commands:
 
@@ -38,10 +38,10 @@ For a manual production-style local build:
 
 ```bash
 npm run build
-PORT=8787 APP_BASE_URL=http://localhost:8787 npm start
+PORT=8797 APP_BASE_URL=http://localhost:8797 npm start
 ```
 
-Then open `http://localhost:8787`.
+Then open `http://localhost:8797`.
 
 Closer OS intentionally remains separate at `http://localhost:5173`.
 
@@ -68,7 +68,7 @@ APP_BASE_URL=https://your-render-service.onrender.com
 LEAKLINE_ENCRYPTION_KEY=<64-character-hex-key>
 LEAKLINE_INVITE_CODE=<private-code-you-send-to-the-client>
 VITE_PUBLIC_CONTACT_EMAIL=<public-contact-email>
-SESSION_DAYS=30
+SESSION_DAYS=14
 ```
 
 Generate a local encryption key with:
@@ -93,7 +93,15 @@ Open **Integrations** inside Leakline.
 
 ### GoHighLevel
 
-Create a private integration token for the target sub-account and grant read-only access to locations, contacts, opportunities, pipelines and users. Enter the token and Location ID in Leakline. Synced contacts, deals and owners replace the corresponding CSV datasets.
+Create a private integration token for the target sub-account and grant access to locations, contacts, opportunities, pipelines, users and conversations. Enter the token and Location ID in Leakline. Synced contacts, deals and owners are matched to payment-recovery cases. Approved SMS and email responses are sent through the connected GoHighLevel account.
+
+For inbound assisted replies, subscribe a HighLevel marketplace app to the **InboundMessage** webhook and set its endpoint to:
+
+```text
+https://your-render-service.onrender.com/api/webhooks/highlevel/inbound
+```
+
+Leakline verifies the current `X-GHL-Signature`, matches the `locationId` and `contactId` to the correct workspace and recovery case, ignores replayed message IDs, classifies the response and creates an editable draft. Routine recovery is paused automatically for opt-outs, disputes, refund requests, hardship and wrong contacts.
 
 Official setup: https://marketplace.gohighlevel.com/docs/
 
@@ -127,6 +135,16 @@ Official quickstart: https://developers.fathom.ai/quickstart
 - The backend automatically syncs connected providers every 15 minutes by default; configure `AUTO_SYNC_MINUTES` to change it.
 - Live datasets are merged with CSV datasets. A live provider owns only its corresponding dataset.
 - Disconnecting a provider removes its live records while preserving unrelated CSV imports.
+
+## Assisted recovery workflow
+
+- **Reply needed** contains inbound customer messages with an editable, classified response draft.
+- **Follow-ups due** contains customers who have not responded within the client-specific cadence.
+- **Promises due** contains payment promises that passed without a verified provider payment.
+- Every SMS or email requires a visible operator approval before sending.
+- The one-minute recovery scheduler only marks work as due; it never sends a message autonomously.
+- A successful payment sync closes the matching case, cancels outstanding follow-ups and attributes the recovered amount once.
+- Workspace rules control sender identity, timezone, follow-up cadence, promise grace period, maximum touches, tone and approved templates.
 
 ## Sandbox integration testing
 

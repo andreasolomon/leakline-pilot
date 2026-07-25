@@ -1,27 +1,36 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, AudioLines, ChevronDown, ChevronUp, ExternalLink, RefreshCw, Search, Users } from 'lucide-react'
 
 type Call = { id: string; title: string; startedAt: string | null; owner: string; participants: string[]; transcript: string; summary: string; url: string }
 
-export default function CallsPage() {
+export default function CallsPage({ workspaceId }: { workspaceId: string }) {
   const [calls, setCalls] = useState<Call[]>([])
   const [query, setQuery] = useState('')
   const [expanded, setExpanded] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const requestId = useRef(0)
 
   const load = async () => {
-    setLoading(true); setError('')
+    const activeRequestId = ++requestId.current
+    setLoading(true); setError(''); setCalls([])
     try {
       const response = await fetch('/api/calls?limit=200')
       const body = await response.json() as { calls?: Call[]; error?: string }
       if (!response.ok) throw new Error(body.error ?? 'Calls could not be loaded.')
+      if (activeRequestId !== requestId.current) return
       setCalls(body.calls ?? [])
-    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : 'Calls could not be loaded.') }
-    finally { setLoading(false) }
+    } catch (requestError) {
+      if (activeRequestId === requestId.current) setError(requestError instanceof Error ? requestError.message : 'Calls could not be loaded.')
+    } finally {
+      if (activeRequestId === requestId.current) setLoading(false)
+    }
   }
 
-  useEffect(() => { void load() }, [])
+  useEffect(() => {
+    void load()
+    return () => { requestId.current += 1 }
+  }, [workspaceId])
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase()
     return needle ? calls.filter((call) => `${call.title} ${call.owner} ${call.participants.join(' ')} ${call.transcript}`.toLowerCase().includes(needle)) : calls

@@ -28,4 +28,4 @@ services:
       - key: LEAKLINE_INVITE_CODE
         sync: false
       - key: SESSION_DAYS
-        value: 30
+        value: 14

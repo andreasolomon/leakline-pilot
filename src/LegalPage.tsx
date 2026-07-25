@@ -6,14 +6,14 @@ import { contactHref, publicContactEmail } from './siteConfig'
 type LegalPageProps = { page: 'privacy' | 'terms' }
 
 const privacySections = [
-  ['Information we collect', 'When you apply for a Revenue Leak Audit, we collect the details you submit, such as your name, work email, phone number, company, role and information about your sales funnel. We also record basic, non-identifying website events such as page views and application steps so we can understand whether the site is working.'],
-  ['How we use it', 'We use this information to assess your application, contact you about LeakLine, prepare or discuss a revenue leak review, operate the website securely and improve the application journey.'],
+  ['Information we collect', 'When you request a Revenue Recovery Assessment, we collect the details you submit, such as your name, work email, phone number, company, role, payment providers and information about failed or overdue payments. We also record basic, non-identifying website events such as page views and application steps so we can understand whether the site is working.'],
+  ['How we use it', 'We use this information to assess your application, contact you about LeakLine, prepare or discuss a payment recovery review, operate the website securely and improve the application journey.'],
   ['Storage and sharing', 'Application and conversion data is stored in LeakLine’s secured backend. We do not sell submitted information. Data may be handled by service providers that are necessary to host and operate LeakLine.'],
   ['Retention and choices', 'We keep information only for as long as it is reasonably needed for the purposes described above. You may ask us to correct or delete information you submitted by contacting LeakLine.'],
 ]
 
 const termsSections = [
-  ['Using this website', 'You may use this website to learn about LeakLine, request a Revenue Leak Audit and access the private client software if you have been given an authorised account or invitation.'],
+  ['Using this website', 'You may use this website to learn about LeakLine, request a Revenue Recovery Assessment and access the private client software if you have been given an authorised account or invitation.'],
   ['Revenue estimates', 'Revenue-at-risk figures, sample reports and recovery opportunities are estimates based on the data available. They are decision-support information, not a guarantee that any amount will be recovered or that a particular commercial result will be achieved.'],
   ['Your responsibilities', 'Provide accurate information, keep client login credentials secure and do not submit passwords, payment-card details or confidential integration credentials through the public application form.'],
   ['Pilot availability', 'LeakLine is an early-stage product. Features may change as the pilot develops, and access may be limited or suspended to protect client data, maintain the service or address misuse.'],
@@ -35,7 +35,7 @@ export default function LegalPage({ page }: LegalPageProps) {
   return (
     <main className="legal-page">
       <nav className="legal-nav">
-        <a href="/" className="landing-logo" aria-label="LeakLine home"><img src={logoMark} alt="" /><span><strong>LeakLine</strong><small>Find the revenue leaks before you scale harder.</small></span></a>
+        <a href="/" className="landing-logo" aria-label="LeakLine home"><img src={logoMark} alt="" /><span><strong>LeakLine</strong><small>Turn overdue revenue into collected cash.</small></span></a>
         <a href="/" className="legal-back"><ArrowLeft size={15} /> Back to website</a>
       </nav>
       <article className="legal-document">

@@ -1,13 +1,63 @@
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto'
 import { join } from 'node:path'
-import type { StoreState, WorkspaceIntegrationState, WorkspaceRecord } from './types.js'
+import type { PaymentRecoveryClassification, PilotValidationRecord, RecoveryMessageTemplate, RecoveryPolicyRecord, StoreState, WorkspaceIntegrationState, WorkspaceRecord } from './types.js'
 
 const defaultWorkspaceId = 'workspace-ascend-growth'
 
-const emptyWorkspaceState = (): WorkspaceIntegrationState => ({ credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, calls: [], oauthStates: {}, recoveryCases: [] })
+const recoveryTemplate = (instruction: string): RecoveryMessageTemplate => ({
+  sms: `Hi {{first_name}}, it’s {{sender_name}} from {{business_name}}. ${instruction} The outstanding amount is {{amount_due}}. You can resolve it securely here: {{payment_link}}. Reply here if you need help.`,
+  emailSubject: `Action needed for your {{business_name}} payment`,
+  emailBody: `Hi {{first_name}},\n\n${instruction}\n\nOutstanding amount: {{amount_due}}\nSecure payment link: {{payment_link}}\n\nIf you need help or need us to note a payment date, reply to this message.\n\n{{sender_name}}\n{{business_name}}`,
+})
+
+export const defaultRecoveryPolicy = (businessName = 'Client business'): RecoveryPolicyRecord => ({
+  businessName,
+  senderName: 'Accounts team',
+  senderEmail: '',
+  senderPhone: '',
+  defaultOwner: 'Finance / Revenue operations',
+  timezone: 'America/New_York',
+  escalationDays: 5,
+  maxTouches: 4,
+  followUpDelaysHours: [24, 72, 168],
+  promiseGraceHours: 4,
+  tone: 'warm',
+  templates: {
+    retryable_failure: recoveryTemplate('Your latest instalment did not complete and your payment provider has a retry scheduled.'),
+    payment_method_required: recoveryTemplate('Your latest instalment needs an updated payment method before it can complete.'),
+    authentication_required: recoveryTemplate('Your latest instalment needs a quick authentication step before it can complete.'),
+    secure_payment_link: recoveryTemplate('Your latest instalment is now overdue.'),
+    human_review: recoveryTemplate('We need to speak with you about the outstanding balance on your account.'),
+  } satisfies Record<PaymentRecoveryClassification, RecoveryMessageTemplate>,
+})
+
+export const defaultPilotValidation = (): PilotValidationRecord => ({
+  monthlyFee: 499,
+  baselineWindowDays: 60,
+  historicEligibleBalance: 0,
+  historicRecoveredAmount: 0,
+  onboardingMinutes: 0,
+  supportMinutes: 0,
+  renewalStatus: 'not_asked',
+  notes: '',
+})
+
+const emptyWorkspaceState = (businessName = 'Client business'): WorkspaceIntegrationState => ({ credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, imports: {}, calls: [], oauthStates: {}, recoveryCases: [], paymentRecoveryCases: [], recoveryPolicy: defaultRecoveryPolicy(businessName), pilotValidation: defaultPilotValidation() })
 
 const emptyState = (): StoreState => ({ workspaces: [], credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, calls: [], oauthStates: {}, users: [], sessions: [], invites: [], leadApplications: [], marketingEvents: [] })
+
+function normaliseRecoveryPolicy(policy: RecoveryPolicyRecord | undefined, businessName: string) {
+  const defaults = defaultRecoveryPolicy(businessName)
+  const merged: RecoveryPolicyRecord = { ...defaults, ...(policy ?? {}), templates: { ...defaults.templates, ...(policy?.templates ?? {}) } }
+  const retryable = merged.templates.retryable_failure
+  merged.templates.retryable_failure = {
+    ...retryable,
+    sms: retryable.sms.replace('and Stripe has a retry scheduled', 'and your payment provider has a retry scheduled'),
+    emailBody: retryable.emailBody.replace('and Stripe has a retry scheduled', 'and your payment provider has a retry scheduled'),
+  }
+  return merged
+}
 
 function normaliseRole(role: unknown, index: number): StoreState['users'][number]['role'] {
   if (role === 'admin') return index === 0 ? 'owner' : 'admin'
@@ -26,16 +76,20 @@ function workspaceFromLegacy(input: Partial<StoreState>): WorkspaceRecord {
     connections: input.connections ?? {},
     oauthConfig: input.oauthConfig ?? {},
     workspace: input.workspace ?? {},
+    imports: {},
     calls: input.calls ?? [],
     oauthStates: input.oauthStates ?? {},
     recoveryCases: [],
+    paymentRecoveryCases: [],
+    recoveryPolicy: defaultRecoveryPolicy('Ascend Growth Partners'),
+    pilotValidation: defaultPilotValidation(),
   }
 }
 
 function normaliseState(input: Partial<StoreState>): StoreState {
   const state = { ...emptyState(), ...input } as StoreState
   state.workspaces = (state.workspaces?.length ? state.workspaces : [workspaceFromLegacy(input)]).map((workspace) => ({
-    ...emptyWorkspaceState(),
+    ...emptyWorkspaceState(workspace.clientName || workspace.name),
     ...workspace,
     clientName: workspace.clientName || workspace.name || 'Client workspace',
     name: workspace.name || workspace.clientName || 'Client workspace',
@@ -43,9 +97,21 @@ function normaliseState(input: Partial<StoreState>): StoreState {
     connections: workspace.connections ?? {},
     oauthConfig: workspace.oauthConfig ?? {},
     workspace: workspace.workspace ?? {},
+    imports: workspace.imports ?? {},
     calls: workspace.calls ?? [],
     oauthStates: workspace.oauthStates ?? {},
     recoveryCases: workspace.recoveryCases ?? [],
+    paymentRecoveryCases: (workspace.paymentRecoveryCases ?? []).map((recoveryCase) => ({
+      ...recoveryCase,
+      attempts: recoveryCase.attempts ?? [],
+      promises: recoveryCase.promises ?? [],
+      suggestions: recoveryCase.suggestions ?? [],
+      followUps: recoveryCase.followUps ?? [],
+      lastInboundAt: recoveryCase.lastInboundAt ?? recoveryCase.attempts?.find((attempt) => attempt.direction === 'inbound')?.createdAt,
+      lastOutboundAt: recoveryCase.lastOutboundAt ?? recoveryCase.attempts?.find((attempt) => attempt.direction === 'outbound')?.createdAt,
+    })),
+    recoveryPolicy: normaliseRecoveryPolicy(workspace.recoveryPolicy, workspace.clientName || workspace.name),
+    pilotValidation: { ...defaultPilotValidation(), ...(workspace.pilotValidation ?? {}) },
   }))
   const fallbackWorkspaceId = state.workspaces[0]?.id ?? defaultWorkspaceId
   state.users = (state.users ?? []).map((user, index) => ({
@@ -68,6 +134,8 @@ export class EncryptedStore {
   private readonly keyPath: string
   private key?: Buffer
   private state?: StoreState
+  private loading?: Promise<StoreState>
+  private writeQueue: Promise<void> = Promise.resolve()
 
   constructor(directory = process.env.LEAKLINE_DATA_DIR || join(process.cwd(), '.data')) {
     this.directory = directory
@@ -93,8 +161,7 @@ export class EncryptedStore {
     return this.key
   }
 
-  private async load() {
-    if (this.state) return this.state
+  private async loadFromDisk(): Promise<StoreState> {
     const key = await this.getKey()
     try {
       const payload = JSON.parse(await readFile(this.statePath, 'utf8')) as { iv: string; tag: string; data: string }
@@ -109,6 +176,15 @@ export class EncryptedStore {
     return this.state
   }
 
+  private async load(): Promise<StoreState> {
+    if (this.state) return this.state
+    if (this.loading) return this.loading
+    const pending = this.loadFromDisk()
+    this.loading = pending
+    try { return await pending }
+    finally { if (this.loading === pending) this.loading = undefined }
+  }
+
   private async persist() {
     const state = await this.load()
     const key = await this.getKey()
@@ -116,15 +192,29 @@ export class EncryptedStore {
     const cipher = createCipheriv('aes-256-gcm', key, iv)
     const encrypted = Buffer.concat([cipher.update(JSON.stringify(state), 'utf8'), cipher.final()])
     await mkdir(this.directory, { recursive: true })
-    await writeFile(this.statePath, JSON.stringify({ iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), data: encrypted.toString('base64') }), { mode: 0o600 })
+    const temporaryPath = `${this.statePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
+    try {
+      await writeFile(temporaryPath, JSON.stringify({ iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), data: encrypted.toString('base64') }), { mode: 0o600 })
+      await rename(temporaryPath, this.statePath)
+    } catch (error) {
+      await unlink(temporaryPath).catch(() => undefined)
+      throw error
+    }
   }
 
-  async read() { return this.load() }
+  async read() {
+    await this.writeQueue
+    return this.load()
+  }
 
   async update(mutator: (state: StoreState) => void | Promise<void>) {
-    const state = await this.load()
-    await mutator(state)
-    await this.persist()
-    return state
+    const operation = this.writeQueue.then(async () => {
+      const state = await this.load()
+      await mutator(state)
+      await this.persist()
+      return state
+    })
+    this.writeQueue = operation.then(() => undefined, () => undefined)
+    return operation
   }
 }

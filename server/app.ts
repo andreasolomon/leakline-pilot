@@ -1,20 +1,87 @@
 import express from 'express'
-import { randomBytes } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual, verify as verifySignature } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { EncryptedStore } from './store.js'
+import { EncryptedStore, defaultPilotValidation, defaultRecoveryPolicy } from './store.js'
 import { IntegrationService } from './integrationService.js'
 import type { ProviderId } from './types.js'
 import { safeErrorMessage } from './safety.js'
 import { AuthService, type PublicUser } from './authService.js'
 import { frontendEntryForPath } from './frontendRoutes.js'
+import { EncryptedPaymentRecoveryRepository } from './paymentRecoveryRepository.js'
+import { PaymentRecoveryService } from './paymentRecoveryService.js'
+import { normalizeFanBasisPayment } from './providers.js'
+import { reconcilePaymentRecoveryCases } from './paymentRecovery.js'
+import { createRateLimiter, requireSameOriginMutation, securityHeaders } from './requestProtection.js'
 
-const providerSchema = z.enum(['stripe', 'highlevel', 'google-calendar', 'fathom'])
+const providerSchema = z.enum(['stripe', 'whop', 'fanbasis', 'highlevel', 'google-calendar', 'fathom'])
 const roleSchema = z.enum(['owner', 'admin', 'manager', 'viewer'])
 const inviteRoleSchema = z.enum(['admin', 'manager', 'viewer'])
+const newPasswordSchema = z.string().min(10).max(128)
+const loginPasswordSchema = z.string().min(1).max(128)
 const marketingEventSchema = z.enum(['page_view', 'apply_click', 'vsl_click', 'sample_report_click', 'client_login_click', 'application_details_submitted', 'application_completed'])
 const recoveryCaseStatusSchema = z.enum(['detected', 'assigned', 'in_progress', 'resolved'])
+const datasetKindSchema = z.enum(['leads', 'appointments', 'deals', 'payments', 'closers'])
+const normalizedValueSchema = z.union([z.string().max(2_000), z.number().finite(), z.boolean(), z.null()])
+const normalizedRowSchema = z.record(z.string().min(1).max(100), normalizedValueSchema).refine((row) => Object.keys(row).length <= 100, 'Each imported row can contain at most 100 fields.')
+const datasetImportSchema = z.object({
+  kind: datasetKindSchema,
+  fileName: z.string().min(1).max(255),
+  rows: z.array(normalizedRowSchema).max(25_000),
+  sourceRows: z.number().int().min(0).max(1_000_000),
+  issues: z.array(z.string().max(300)).max(20),
+  mappedFields: z.array(z.string().min(1).max(100)).max(100),
+  headers: z.array(z.string().max(200)).max(200),
+  mapping: z.record(z.string().min(1).max(100), z.string().max(200)).refine((mapping) => Object.keys(mapping).length <= 100, 'An import can contain at most 100 column mappings.'),
+}).strict()
+const importWorkspaceSchema = z.object({
+  leads: datasetImportSchema.optional(),
+  appointments: datasetImportSchema.optional(),
+  deals: datasetImportSchema.optional(),
+  payments: datasetImportSchema.optional(),
+  closers: datasetImportSchema.optional(),
+}).strict().superRefine((workspace, context) => {
+  for (const [kind, dataset] of Object.entries(workspace)) {
+    if (dataset && dataset.kind !== kind) context.addIssue({ code: 'custom', path: [kind, 'kind'], message: `Dataset kind must be ${kind}.` })
+  }
+})
+const paymentRecoveryStatusSchema = z.enum(['retry_in_progress', 'payment_method_required', 'authentication_required', 'secure_payment_link_required', 'promise_pending', 'human_intervention', 'recovered', 'closed_unrecovered'])
+const paymentClassificationSchema = z.enum(['retryable_failure', 'payment_method_required', 'authentication_required', 'secure_payment_link', 'human_review'])
+const recoveryTemplateSchema = z.object({ sms: z.string().min(10).max(1500), emailSubject: z.string().min(3).max(180), emailBody: z.string().min(10).max(5000) })
+const timezoneSchema = z.string().min(3).max(80).refine((value) => {
+  try { new Intl.DateTimeFormat('en-US', { timeZone: value }).format(); return true }
+  catch { return false }
+}, 'Use a valid IANA timezone such as America/New_York or Europe/London.')
+const recoveryPolicySchema = z.object({
+  businessName: z.string().min(2).max(120), senderName: z.string().min(2).max(100), senderEmail: z.string().max(160), senderPhone: z.string().max(50), defaultOwner: z.string().min(2).max(100), timezone: timezoneSchema, escalationDays: z.number().int().min(1).max(60), maxTouches: z.number().int().min(1).max(20), tone: z.enum(['warm', 'direct', 'formal']),
+  followUpDelaysHours: z.array(z.number().int().min(1).max(24 * 30)).min(1).max(8), promiseGraceHours: z.number().int().min(0).max(72),
+  templates: z.record(paymentClassificationSchema, recoveryTemplateSchema),
+  templatesApprovedAt: z.string().optional(), templatesApprovedBy: z.string().optional(),
+})
+const pilotValidationSchema = z.object({
+  monthlyFee: z.number().min(0).max(100_000),
+  startedAt: z.string().date().optional(),
+  baselineWindowDays: z.number().int().min(30).max(90),
+  historicEligibleBalance: z.number().min(0).max(100_000_000),
+  historicRecoveredAmount: z.number().min(0).max(100_000_000),
+  onboardingMinutes: z.number().int().min(0).max(100_000),
+  supportMinutes: z.number().int().min(0).max(100_000),
+  renewalStatus: z.enum(['not_asked', 'yes', 'no', 'undecided']),
+  notes: z.string().max(2000),
+  updatedAt: z.string().optional(),
+  updatedBy: z.string().optional(),
+})
+function dateInTimezone(date: string, timezone: string) {
+  const guess = Date.parse(`${date}T09:00:00.000Z`)
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(guess)).map((part) => [part.type, part.value]))
+  const representedAsUtc = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second))
+  return new Date(guess - (representedAsUtc - guess)).toISOString()
+}
+function localDateInTimezone(timezone: string, now = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now).map((part) => [part.type, part.value]))
+  return `${parts.year}-${parts.month}-${parts.day}`
+}
 const detectedCaseSchema = z.object({
   leakId: z.number().int(),
   type: z.string().min(1).max(80),
@@ -31,13 +98,23 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
   const app = express()
   const service = new IntegrationService(store, fetcher)
   const auth = new AuthService(store)
+  const recoveryRepository = new EncryptedPaymentRecoveryRepository(store)
+  const paymentRecovery = new PaymentRecoveryService(store, recoveryRepository, fetcher)
+  if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1)
   app.disable('x-powered-by')
-  app.use(express.json({ limit: '256kb' }))
+  app.use(securityHeaders)
+  app.use('/api', requireSameOriginMutation)
+  const standardJsonParser = express.json({ limit: '256kb', verify: (request, _response, buffer) => { (request as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buffer) } })
+  app.use((request, response, next) => request.path.startsWith('/api/imports') ? next() : standardJsonParser(request, response, next))
   app.use('/api', (_request, response, next) => { response.setHeader('Cache-Control', 'no-store'); next() })
+  const authLimiter = createRateLimiter({ windowMs: 15 * 60_000, max: 20 })
+  const leadLimiter = createRateLimiter({ windowMs: 60 * 60_000, max: 20 })
+  const marketingLimiter = createRateLimiter({ windowMs: 15 * 60_000, max: 300 })
+  const webhookLimiter = createRateLimiter({ windowMs: 5 * 60_000, max: 600 })
 
   app.get('/api/health', (_request, response) => response.json({ ok: true, version: 2 }))
 
-  app.post('/api/marketing-events', async (request, response) => {
+  app.post('/api/marketing-events', marketingLimiter, async (request, response) => {
     try {
       const input = z.object({
         event: marketingEventSchema,
@@ -54,7 +131,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     }
   })
 
-  app.post('/api/leads', async (request, response) => {
+  app.post('/api/leads', leadLimiter, async (request, response) => {
     try {
       const input = z.object({
         name: z.string().min(2).max(80),
@@ -65,8 +142,12 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
         role: z.string().max(80).optional().default(''),
         monthlyBookedCalls: z.string().max(60).optional().default(''),
         offerPrice: z.string().max(60).optional().default(''),
+        monthlyOverdueVolume: z.string().max(60).optional().default(''),
+        monthlyFailedPayments: z.string().max(60).optional().default(''),
+        paymentProvider: z.string().max(80).optional().default(''),
         crm: z.string().max(80).optional().default(''),
         suspectedLeak: z.string().max(160).optional().default(''),
+        currentRecoveryProcess: z.string().max(160).optional().default(''),
         notes: z.string().max(600).optional().default(''),
       }).parse(request.body)
       let leadId = ''
@@ -82,13 +163,18 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
           role: input.role.trim() || undefined,
           monthlyBookedCalls: input.monthlyBookedCalls.trim() || undefined,
           offerPrice: input.offerPrice.trim() || undefined,
+          monthlyOverdueVolume: input.monthlyOverdueVolume.trim() || undefined,
+          monthlyFailedPayments: input.monthlyFailedPayments.trim() || undefined,
+          paymentProvider: input.paymentProvider.trim() || undefined,
           crm: input.crm.trim() || undefined,
           suspectedLeak: input.suspectedLeak.trim() || undefined,
+          currentRecoveryProcess: input.currentRecoveryProcess.trim() || undefined,
           notes: input.notes.trim() || undefined,
           source: 'landing-page',
           status: 'new',
           createdAt: new Date().toISOString(),
         })
+        if (state.leadApplications.length > 10_000) state.leadApplications.splice(0, state.leadApplications.length - 10_000)
       })
       response.status(201).json({ ok: true, leadId })
     } catch (error) {
@@ -96,14 +182,18 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     }
   })
 
-  app.post('/api/leads/:leadId/qualify', async (request, response) => {
+  app.post('/api/leads/:leadId/qualify', leadLimiter, async (request, response) => {
     try {
       const input = z.object({
         website: z.string().max(180).optional().default(''),
-        monthlyBookedCalls: z.string().min(1).max(60),
-        offerPrice: z.string().min(1).max(60),
+        monthlyBookedCalls: z.string().max(60).optional().default(''),
+        offerPrice: z.string().max(60).optional().default(''),
+        monthlyOverdueVolume: z.string().max(60).optional().default(''),
+        monthlyFailedPayments: z.string().max(60).optional().default(''),
+        paymentProvider: z.string().max(80).optional().default(''),
         crm: z.string().max(80).optional().default(''),
-        suspectedLeak: z.string().min(2).max(160),
+        suspectedLeak: z.string().max(160).optional().default(''),
+        currentRecoveryProcess: z.string().max(160).optional().default(''),
         notes: z.string().max(600).optional().default(''),
       }).parse(request.body)
       let updated = false
@@ -111,10 +201,14 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
         const lead = state.leadApplications.find((item) => item.id === request.params.leadId)
         if (!lead) throw new Error('Application not found.')
         lead.website = input.website.trim() || lead.website
-        lead.monthlyBookedCalls = input.monthlyBookedCalls.trim()
-        lead.offerPrice = input.offerPrice.trim()
+        lead.monthlyBookedCalls = input.monthlyBookedCalls.trim() || lead.monthlyBookedCalls
+        lead.offerPrice = input.offerPrice.trim() || lead.offerPrice
+        lead.monthlyOverdueVolume = input.monthlyOverdueVolume.trim() || lead.monthlyOverdueVolume
+        lead.monthlyFailedPayments = input.monthlyFailedPayments.trim() || lead.monthlyFailedPayments
+        lead.paymentProvider = input.paymentProvider.trim() || lead.paymentProvider
         lead.crm = input.crm.trim() || undefined
-        lead.suspectedLeak = input.suspectedLeak.trim()
+        lead.suspectedLeak = input.suspectedLeak.trim() || lead.suspectedLeak
+        lead.currentRecoveryProcess = input.currentRecoveryProcess.trim() || lead.currentRecoveryProcess
         lead.notes = input.notes.trim() || undefined
         lead.status = 'qualified'
         lead.qualifiedAt = new Date().toISOString()
@@ -126,6 +220,61 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     }
   })
 
+  app.post('/api/payment-sources/fanbasis/:workspaceId/events', webhookLimiter, async (request, response) => {
+    try {
+      const input = z.object({ payments: z.array(z.record(z.string(), z.unknown())).min(1).max(500) }).parse(request.body)
+      const supplied = String(request.headers['x-leakline-signature'] ?? '')
+      await store.update((state) => {
+        const workspace = state.workspaces.find((item) => item.id === request.params.workspaceId && !item.archivedAt)
+        const credential = workspace?.credentials.fanbasis
+        if (!workspace || !credential) throw new Error('FanBasis recovery bridge is not configured.')
+        const left = Buffer.from(supplied, 'hex')
+        const rawBody = (request as express.Request & { rawBody?: Buffer }).rawBody ?? Buffer.from(JSON.stringify(request.body))
+        const right = Buffer.from(createHmac('sha256', credential.webhookSecret).update(rawBody).digest('hex'), 'hex')
+        if (!left.length || left.length !== right.length || !timingSafeEqual(left, right)) throw new Error('FanBasis recovery bridge signature is invalid.')
+        const incoming = input.payments.map(normalizeFanBasisPayment).filter((row) => row.id)
+        const existing = workspace.workspace.payments?.rows.filter((row) => row.payment_provider !== 'fanbasis') ?? []
+        const byId = new Map(incoming.map((row) => [String(row.id), row]))
+        const previousFanBasis = workspace.workspace.payments?.rows.filter((row) => row.payment_provider === 'fanbasis' && !byId.has(String(row.id))) ?? []
+        const rows = [...existing, ...previousFanBasis, ...incoming]
+        const fields = [...new Set(rows.flatMap((row) => Object.keys(row)))]
+        workspace.workspace.payments = { kind: 'payments', fileName: 'Connected payment providers', rows, sourceRows: rows.length, issues: [], mappedFields: fields, headers: fields, mapping: Object.fromEntries(fields.map((field) => [field, field])) }
+        workspace.connections.fanbasis = { ...(workspace.connections.fanbasis ?? { connectedAt: new Date().toISOString() }), lastSyncAt: new Date().toISOString(), accountLabel: credential.accountLabel, recordCounts: { payments: incoming.length }, mode: 'live' }
+        reconcilePaymentRecoveryCases(workspace)
+      })
+      response.status(202).json({ ok: true, accepted: input.payments.length })
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(/signature/i.test(message) ? 403 : /configured/i.test(message) ? 404 : 400).json({ error: message })
+    }
+  })
+
+  app.post('/api/webhooks/highlevel/inbound', webhookLimiter, async (request, response) => {
+    const publicKey = `-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAi2HR1srL4o18O8BRa7gVJY7G7bupbN3H9AwJrHCDiOg=\n-----END PUBLIC KEY-----`
+    try {
+      const rawBody = (request as express.Request & { rawBody?: Buffer }).rawBody ?? Buffer.from(JSON.stringify(request.body))
+      const signature = String(request.headers['x-ghl-signature'] ?? '')
+      const localTest = process.env.NODE_ENV === 'test' && request.headers['x-leakline-test-webhook'] === 'true'
+      if (!localTest && (!signature || !verifySignature(null, rawBody, publicKey, Buffer.from(signature, 'base64')))) return response.status(401).json({ error: 'Invalid GoHighLevel webhook signature.' })
+      const input = z.object({ type: z.literal('InboundMessage'), locationId: z.string().min(1), contactId: z.string().min(1), conversationId: z.string().optional(), messageId: z.string().optional(), emailMessageId: z.string().optional(), body: z.string().min(1).max(10_000), messageType: z.string().optional(), direction: z.string().optional(), dateAdded: z.string().optional() }).parse(request.body)
+      const state = await store.read()
+      const workspace = state.workspaces.find((item) => item.credentials.highlevel?.locationId === input.locationId && !item.archivedAt)
+      if (!workspace) return response.status(200).json({ ok: true, ignored: 'workspace_not_found' })
+      const providerMessageId = input.messageId ?? input.emailMessageId
+      if (providerMessageId && workspace.paymentRecoveryCases.some((item) => item.attempts.some((attempt) => attempt.providerMessageId === providerMessageId))) return response.status(200).json({ ok: true, ignored: 'duplicate_message' })
+      const candidates = workspace.paymentRecoveryCases.filter((item) => item.contactId === input.contactId && !['recovered', 'closed_unrecovered'].includes(item.status))
+      const latestOutboundAt = (item: typeof candidates[number]) => item.attempts.filter((attempt) => attempt.direction === 'outbound').map((attempt) => attempt.createdAt).sort().at(-1) ?? item.updatedAt
+      const recoveryCase = candidates.find((item) => input.conversationId && item.conversationId === input.conversationId)
+        ?? [...candidates].sort((left, right) => latestOutboundAt(right).localeCompare(latestOutboundAt(left)))[0]
+      if (!recoveryCase) return response.status(200).json({ ok: true, ignored: 'recovery_case_not_found' })
+      const channel = input.messageType?.toLowerCase() === 'email' ? 'email' : 'sms'
+      await recoveryRepository.addAttempt(workspace.id, recoveryCase.id, { channel, direction: 'inbound', summary: 'Customer response received through GoHighLevel.', body: input.body, providerMessageId, conversationId: input.conversationId, createdBy: recoveryCase.customerName })
+      response.status(202).json({ ok: true, caseId: recoveryCase.id })
+    } catch (error) {
+      response.status(error instanceof z.ZodError ? 400 : 200).json({ ok: false, error: safeErrorMessage(error) })
+    }
+  })
+
   app.get('/api/auth/me', async (request, response, next) => {
     try {
       const user = await auth.currentUser(request)
@@ -133,9 +282,9 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     } catch (error) { next(error) }
   })
 
-  app.post('/api/auth/signup', async (request, response, next) => {
+  app.post('/api/auth/signup', authLimiter, async (request, response, next) => {
     try {
-      const input = z.object({ name: z.string().max(80).default(''), email: z.string().email(), password: z.string().min(10), inviteCode: z.string().optional() }).parse(request.body)
+      const input = z.object({ name: z.string().max(80).default(''), email: z.string().email(), password: newPasswordSchema, inviteCode: z.string().optional() }).parse(request.body)
       const result = await auth.signup(input)
       auth.setSessionCookie(response, result.sessionId)
       response.status(201).json({ user: result.user })
@@ -145,9 +294,9 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     }
   })
 
-  app.post('/api/auth/login', async (request, response, next) => {
+  app.post('/api/auth/login', authLimiter, async (request, response, next) => {
     try {
-      const input = z.object({ email: z.string().email(), password: z.string().min(1) }).parse(request.body)
+      const input = z.object({ email: z.string().email(), password: loginPasswordSchema }).parse(request.body)
       const result = await auth.login(input)
       auth.setSessionCookie(response, result.sessionId)
       response.json({ user: result.user })
@@ -165,18 +314,18 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     } catch (error) { next(error) }
   })
 
-  app.get('/api/invites/:token', async (request, response) => {
+  app.get('/api/invites/:token', authLimiter, async (request, response) => {
     try {
-      response.json({ invite: await auth.previewInvite(request.params.token) })
+      response.json({ invite: await auth.previewInvite(z.string().min(1).parse(request.params.token)) })
     } catch (error) {
       response.status(404).json({ error: safeErrorMessage(error) })
     }
   })
 
-  app.post('/api/invites/:token/accept', async (request, response, next) => {
+  app.post('/api/invites/:token/accept', authLimiter, async (request, response, next) => {
     try {
-      const input = z.object({ name: z.string().max(80).default(''), password: z.string().min(10) }).parse(request.body)
-      const result = await auth.acceptInvite(request.params.token, input)
+      const input = z.object({ name: z.string().max(80).default(''), password: newPasswordSchema }).parse(request.body)
+      const result = await auth.acceptInvite(z.string().min(1).parse(request.params.token), input)
       auth.setSessionCookie(response, result.sessionId)
       response.status(201).json({ user: result.user })
     } catch (error) {
@@ -197,8 +346,85 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
       next()
     } catch (error) { next(error) }
   })
+  app.use('/api/imports', express.json({ limit: '5mb' }))
 
   const activeWorkspaceId = (response: express.Response) => (response.locals.user as PublicUser).workspaceId
+
+  app.get('/api/payment-recovery', async (_request, response, next) => {
+    try { response.json(await recoveryRepository.snapshot(activeWorkspaceId(response))) } catch (error) { next(error) }
+  })
+
+  app.post('/api/payment-recovery/sync', async (_request, response, next) => {
+    try { auth.requireDataEditor(response.locals.user as PublicUser); await recoveryRepository.reconcile(activeWorkspaceId(response)); response.json(await recoveryRepository.snapshot(activeWorkspaceId(response))) } catch (error) { next(error) }
+  })
+
+  app.post('/api/payment-recovery/process-due', async (_request, response, next) => {
+    try { auth.requireDataEditor(response.locals.user as PublicUser); await recoveryRepository.processDue(activeWorkspaceId(response)); response.json(await recoveryRepository.snapshot(activeWorkspaceId(response))) } catch (error) { next(error) }
+  })
+
+  app.post('/api/payment-recovery/sample', async (_request, response, next) => {
+    try { auth.requireDataEditor(response.locals.user as PublicUser); const actor = response.locals.user as PublicUser; await recoveryRepository.seedSample(activeWorkspaceId(response), actor.name || actor.email); response.json(await recoveryRepository.snapshot(activeWorkspaceId(response))) } catch (error) { next(error) }
+  })
+
+  app.patch('/api/payment-recovery/policy', async (request, response, next) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      const input = z.object({ policy: recoveryPolicySchema, approve: z.boolean().default(false) }).parse(request.body)
+      const actor = response.locals.user as PublicUser
+      await recoveryRepository.updatePolicy(activeWorkspaceId(response), input.policy, actor.name || actor.email, input.approve)
+      response.json(await recoveryRepository.snapshot(activeWorkspaceId(response)))
+    } catch (error) { next(error) }
+  })
+
+  app.patch('/api/payment-recovery/pilot-validation', async (request, response, next) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      const validation = pilotValidationSchema.parse(request.body)
+      const actor = response.locals.user as PublicUser
+      await recoveryRepository.updatePilotValidation(activeWorkspaceId(response), validation, actor.name || actor.email)
+      response.json(await recoveryRepository.snapshot(activeWorkspaceId(response)))
+    } catch (error) { next(error) }
+  })
+
+  app.post('/api/payment-recovery/cases/:caseId/preview', async (request, response, next) => {
+    try { const input = z.object({ channel: z.enum(['sms', 'email']) }).parse(request.body); response.json(await paymentRecovery.preview(activeWorkspaceId(response), request.params.caseId, input.channel)) } catch (error) { next(error) }
+  })
+
+  app.post('/api/payment-recovery/cases/:caseId/send', async (request, response, next) => {
+    try { auth.requireDataEditor(response.locals.user as PublicUser); const input = z.object({ channel: z.enum(['sms', 'email']), approved: z.literal(true) }).parse(request.body); response.json(await paymentRecovery.send(activeWorkspaceId(response), request.params.caseId, input.channel, input.approved, response.locals.user as PublicUser)) } catch (error) { next(error) }
+  })
+
+  app.post('/api/payment-recovery/cases/:caseId/follow-ups/:followUpId/prepare', async (request, response, next) => {
+    try { auth.requireDataEditor(response.locals.user as PublicUser); response.json({ suggestion: await recoveryRepository.prepareFollowUp(activeWorkspaceId(response), request.params.caseId, request.params.followUpId) }) } catch (error) { next(error) }
+  })
+
+  app.post('/api/payment-recovery/cases/:caseId/suggestions/:suggestionId/send', async (request, response, next) => {
+    try { auth.requireDataEditor(response.locals.user as PublicUser); const input = z.object({ body: z.string().min(2).max(5000), subject: z.string().max(180).optional(), approved: z.literal(true) }).parse(request.body); response.json(await paymentRecovery.sendSuggestion(activeWorkspaceId(response), request.params.caseId, request.params.suggestionId, input, response.locals.user as PublicUser)) } catch (error) { next(error) }
+  })
+
+  app.patch('/api/payment-recovery/cases/:caseId/suggestions/:suggestionId', async (request, response, next) => {
+    try { auth.requireDataEditor(response.locals.user as PublicUser); const input = z.object({ status: z.enum(['dismissed', 'escalated']) }).parse(request.body); response.json({ case: await recoveryRepository.updateSuggestion(activeWorkspaceId(response), request.params.caseId, request.params.suggestionId, input) }) } catch (error) { next(error) }
+  })
+
+  app.post('/api/payment-recovery/cases/:caseId/inbound', async (request, response, next) => {
+    try { auth.requireDataEditor(response.locals.user as PublicUser); const input = z.object({ channel: z.enum(['sms', 'email']), body: z.string().min(1).max(5000) }).parse(request.body); const recoveryCase = await recoveryRepository.getCase(activeWorkspaceId(response), request.params.caseId); response.json({ case: await recoveryRepository.addAttempt(activeWorkspaceId(response), request.params.caseId, { channel: input.channel, direction: 'inbound', summary: 'Customer response recorded by operator.', body: input.body, createdBy: recoveryCase.customerName }) }) } catch (error) { next(error) }
+  })
+
+  app.post('/api/payment-recovery/cases/:caseId/attempts', async (request, response, next) => {
+    try { auth.requireDataEditor(response.locals.user as PublicUser); const input = z.object({ channel: z.enum(['sms', 'email', 'call', 'note']), direction: z.enum(['inbound', 'outbound', 'internal']), summary: z.string().min(2).max(500), body: z.string().max(3000).optional() }).parse(request.body); response.json({ case: await paymentRecovery.recordAttempt(activeWorkspaceId(response), request.params.caseId, input, response.locals.user as PublicUser) }) } catch (error) { next(error) }
+  })
+
+  app.post('/api/payment-recovery/cases/:caseId/promises', async (request, response, next) => {
+    try { auth.requireDataEditor(response.locals.user as PublicUser); const input = z.object({ amount: z.number().positive().max(100_000_000), dueDate: z.string().date(), note: z.string().max(1000).optional() }).parse(request.body); const actor = response.locals.user as PublicUser; const timezone = (await recoveryRepository.snapshot(activeWorkspaceId(response))).policy.timezone; if (input.dueDate < localDateInTimezone(timezone)) return response.status(400).json({ error: 'A promise date cannot be in the past.' }); response.json({ case: await recoveryRepository.addPromise(activeWorkspaceId(response), request.params.caseId, { amount: input.amount, dueAt: dateInTimezone(input.dueDate, timezone), note: input.note, createdBy: actor.name || actor.email }) }) } catch (error) { next(error) }
+  })
+
+  app.post('/api/payment-recovery/cases/:caseId/suggestions/:suggestionId/promise', async (request, response, next) => {
+    try { auth.requireDataEditor(response.locals.user as PublicUser); const input = z.object({ amount: z.number().positive().max(100_000_000), dueDate: z.string().date(), note: z.string().max(1000).optional() }).parse(request.body); const timezone = (await recoveryRepository.snapshot(activeWorkspaceId(response))).policy.timezone; if (input.dueDate < localDateInTimezone(timezone)) return response.status(400).json({ error: 'A promise date cannot be in the past.' }); response.json(await paymentRecovery.recordPromiseFromSuggestion(activeWorkspaceId(response), request.params.caseId, request.params.suggestionId, { amount: input.amount, dueAt: dateInTimezone(input.dueDate, timezone), note: input.note }, response.locals.user as PublicUser)) } catch (error) { next(error) }
+  })
+
+  app.patch('/api/payment-recovery/cases/:caseId', async (request, response, next) => {
+    try { auth.requireDataEditor(response.locals.user as PublicUser); const input = z.object({ status: paymentRecoveryStatusSchema.optional(), owner: z.string().min(1).max(100).optional(), escalationReason: z.string().max(1000).optional(), recoveredAmount: z.number().min(0).max(100_000_000).optional(), note: z.string().max(1000).optional() }).parse(request.body); const actor = response.locals.user as PublicUser; response.json({ case: await recoveryRepository.updateCase(activeWorkspaceId(response), request.params.caseId, input, actor.name || actor.email) }) } catch (error) { next(error) }
+  })
 
   app.get('/api/admin/users', async (_request, response, next) => {
     try { response.json({ users: await auth.listUsers(response.locals.user as PublicUser) }) }
@@ -210,7 +436,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
       const input = z.object({
         name: z.string().max(80).default(''),
         email: z.string().email(),
-        password: z.string().min(10),
+        password: newPasswordSchema,
         role: roleSchema.default('manager'),
         workspaceIds: z.array(z.string()).optional(),
       }).parse(request.body)
@@ -235,7 +461,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
 
   app.post('/api/admin/users/:userId/reset-password', async (request, response) => {
     try {
-      const input = z.object({ password: z.string().min(10) }).parse(request.body)
+      const input = z.object({ password: newPasswordSchema }).parse(request.body)
       response.json(await auth.resetPassword(response.locals.user as PublicUser, request.params.userId, input.password))
     } catch (error) {
       response.status(error instanceof z.ZodError ? 400 : 403).json({ error: safeErrorMessage(error) })
@@ -307,9 +533,13 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
           connections: {},
           oauthConfig: {},
           workspace: {},
+          imports: {},
           calls: [],
           oauthStates: {},
           recoveryCases: [],
+          paymentRecoveryCases: [],
+          recoveryPolicy: defaultRecoveryPolicy(input.clientName.trim()),
+          pilotValidation: defaultPilotValidation(),
         })
         for (const user of state.users.filter((item) => item.role === 'owner')) {
           user.workspaceIds = Array.from(new Set([...(user.workspaceIds ?? []), workspaceId]))
@@ -362,6 +592,44 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
       response.json({ ok: true })
     } catch (error) {
       response.status(403).json({ error: safeErrorMessage(error) })
+    }
+  })
+
+  app.get('/api/imports', async (_request, response) => {
+    const state = await store.read()
+    const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+    if (!workspace) return response.status(404).json({ error: 'Workspace not found.' })
+    response.json({ workspace: workspace.imports })
+  })
+
+  app.put('/api/imports', async (request, response) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      const input = z.object({ workspace: importWorkspaceSchema }).parse(request.body)
+      await store.update((state) => {
+        const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+        if (!workspace) throw new Error('Workspace not found.')
+        workspace.imports = input.workspace
+      })
+      response.json({ workspace: input.workspace })
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(error instanceof z.ZodError ? 400 : /not found/i.test(message) ? 404 : 403).json({ error: message })
+    }
+  })
+
+  app.delete('/api/imports', async (_request, response) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      await store.update((state) => {
+        const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+        if (!workspace) throw new Error('Workspace not found.')
+        workspace.imports = {}
+      })
+      response.json({ workspace: {} })
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(/not found/i.test(message) ? 404 : 403).json({ error: message })
     }
   })
 
@@ -509,6 +777,10 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
       if (provider === 'google-calendar') return response.status(400).json({ error: 'Use the Google OAuth start endpoint.' })
       const credential = provider === 'stripe'
         ? z.object({ secretKey: z.string().min(20).regex(/^(sk|rk)_(test|live)_/, 'Use a Stripe secret or restricted key.') }).parse(request.body)
+        : provider === 'whop'
+          ? z.object({ apiKey: z.string().min(20), companyId: z.string().regex(/^biz_/, 'Use a Whop company ID beginning with biz_.'), sandbox: z.boolean().default(false) }).parse(request.body)
+          : provider === 'fanbasis'
+            ? z.object({ webhookSecret: z.string().min(24), accountLabel: z.string().min(2).max(100) }).parse(request.body)
         : provider === 'highlevel'
           ? z.object({ accessToken: z.string().min(20), locationId: z.string().min(5) }).parse(request.body)
           : z.object({ apiKey: z.string().min(10) }).parse(request.body)
@@ -540,7 +812,9 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
   app.get('/api/integrations/google-calendar/callback', async (request, response, next) => {
     try {
       const query = z.object({ code: z.string().min(1), state: z.string().min(1) }).parse(request.query)
-      await service.finishGoogleAuthorization(query.code, query.state)
+      const actor = response.locals.user as PublicUser
+      auth.requireIntegrationManager(actor)
+      await service.finishGoogleAuthorization(query.code, query.state, new Set(actor.workspaces.map((workspace) => workspace.id)))
       response.redirect('/app?integration=google-calendar&connected=1')
     } catch (error) { next(error) }
   })
@@ -557,7 +831,10 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
     const message = error instanceof z.ZodError ? error.issues.map((issue) => issue.message).join(', ') : safeErrorMessage(error)
     const permissionDenied = /access required|access denied|permission|owner access|manager access|admin access/i.test(message)
-    response.status(error instanceof z.ZodError ? 400 : permissionDenied ? 403 : 502).json({ error: message })
+    const notFound = /not found/i.test(message)
+    const stateConflict = /no longer|already|paused|reached|unresolved placeholder|approve .* before|cannot exceed/i.test(message)
+    const payloadTooLarge = (error as { status?: number }).status === 413
+    response.status(error instanceof z.ZodError ? 400 : payloadTooLarge ? 413 : permissionDenied ? 403 : notFound ? 404 : stateConflict ? 409 : 502).json({ error: message })
   })
   return app
 }

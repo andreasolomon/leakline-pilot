@@ -2,7 +2,10 @@ import 'dotenv/config'
 import { createApp } from './app.js'
 import { EncryptedStore } from './store.js'
 import { IntegrationService } from './integrationService.js'
+import { EncryptedPaymentRecoveryRepository } from './paymentRecoveryRepository.js'
+import { validateProductionConfiguration } from './productionConfig.js'
 
+validateProductionConfiguration()
 const port = Number(process.env.PORT ?? 8787)
 const host = process.env.HOST ?? (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1')
 const store = new EncryptedStore()
@@ -20,11 +23,22 @@ const runAutoSync = async () => {
     process.stderr.write(`Automatic sync failed: ${error instanceof Error ? error.message : String(error)}\n`)
   }
 }
+const runRecoveryScheduler = async () => {
+  try {
+    const state = await store.read()
+    const repository = new EncryptedPaymentRecoveryRepository(store)
+    for (const workspace of state.workspaces.filter((item) => !item.archivedAt)) await repository.processDue(workspace.id)
+  } catch (error) {
+    process.stderr.write(`Recovery scheduler failed: ${error instanceof Error ? error.message : String(error)}\n`)
+  }
+}
 const initialSyncTimer = setTimeout(runAutoSync, 5_000)
 initialSyncTimer.unref()
 const syncTimer = setInterval(runAutoSync, autoSyncMinutes * 60_000)
 syncTimer.unref()
+const recoveryTimer = setInterval(runRecoveryScheduler, 60_000)
+recoveryTimer.unref()
 
-const shutdown = () => { clearTimeout(initialSyncTimer); clearInterval(syncTimer); server.close(() => process.exit(0)) }
+const shutdown = () => { clearTimeout(initialSyncTimer); clearInterval(syncTimer); clearInterval(recoveryTimer); server.close(() => process.exit(0)) }
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)

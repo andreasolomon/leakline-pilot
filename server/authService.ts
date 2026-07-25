@@ -24,6 +24,11 @@ const sessionHash = (sessionId: string) => createHash('sha256').update(sessionId
 const inviteTokenHash = (token: string) => createHash('sha256').update(token).digest('hex')
 const inviteDays = Math.max(1, Number(process.env.INVITE_DAYS ?? 7))
 
+function assertPasswordLength(password: string) {
+  if (password.length < 10) throw new Error('Password must be at least 10 characters.')
+  if (password.length > 128) throw new Error('Password must be no more than 128 characters.')
+}
+
 async function hashPassword(password: string, salt = randomBytes(16).toString('hex')) {
   const derived = await scrypt(password, salt, 64) as Buffer
   return { salt, hash: derived.toString('hex') }
@@ -44,7 +49,8 @@ function parseCookies(header: string | undefined) {
 }
 
 function recordCount(workspace: WorkspaceRecord) {
-  return Object.values(workspace.workspace ?? {}).reduce((sum, dataset) => sum + (dataset?.rows.length ?? 0), 0) + (workspace.calls?.length ?? 0)
+  const visibleWorkspace = { ...(workspace.imports ?? {}), ...(workspace.workspace ?? {}) }
+  return Object.values(visibleWorkspace).reduce((sum, dataset) => sum + (dataset?.rows.length ?? 0), 0) + (workspace.calls?.length ?? 0)
 }
 
 function accessibleWorkspaces(state: StoreState, user: UserRecord) {
@@ -99,7 +105,7 @@ function usersShareWorkspace(actor: PublicUser, user: UserRecord) {
 function validWorkspaceIdsForActor(actor: PublicUser, state: StoreState, requested?: string[]) {
   const existing = new Set(state.workspaces.filter((workspace) => !workspace.archivedAt).map((workspace) => workspace.id))
   const requestedExisting = (requested ?? []).filter((workspaceId) => existing.has(workspaceId))
-  if (actor.role === 'owner') return requestedExisting.length ? requestedExisting : [...existing]
+  if (actor.role === 'owner') return requestedExisting.length ? requestedExisting : [actor.workspaceId].filter((workspaceId) => existing.has(workspaceId))
   const allowed = actorWorkspaceIds(actor)
   const scoped = requestedExisting.filter((workspaceId) => allowed.has(workspaceId))
   return scoped.length ? scoped : [actor.workspaceId].filter(Boolean)
@@ -164,7 +170,7 @@ export class AuthService {
   constructor(private readonly store: EncryptedStore) {}
 
   enabled() {
-    if (process.env.LEAKLINE_AUTH_DISABLED === 'true') return false
+    if (process.env.LEAKLINE_AUTH_DISABLED === 'true' && process.env.NODE_ENV !== 'production') return false
     if (process.env.NODE_ENV === 'test' && process.env.LEAKLINE_AUTH_ENABLED !== 'true') return false
     return true
   }
@@ -193,9 +199,12 @@ export class AuthService {
     const sessionId = parseCookies(request.headers.cookie)[sessionCookieName]
     if (!sessionId) return null
     const now = Date.now()
-    const state = await this.store.update((draft) => {
-      draft.sessions = draft.sessions.filter((session) => session.expiresAt > now)
-    })
+    let state = await this.store.read()
+    if (state.sessions.some((session) => session.expiresAt <= now)) {
+      state = await this.store.update((draft) => {
+        draft.sessions = draft.sessions.filter((session) => session.expiresAt > now)
+      })
+    }
     const session = state.sessions.find((item) => item.idHash === sessionHash(sessionId))
     if (!session) return null
     const user = state.users.find((item) => item.id === session.userId)
@@ -213,7 +222,7 @@ export class AuthService {
     if (input.inviteCode?.trim() !== requiredInvite) throw new Error('Invite code is incorrect.')
     const email = normaliseEmail(input.email)
     const name = input.name.trim() || email.split('@')[0] || 'Leakline user'
-    if (input.password.length < 10) throw new Error('Password must be at least 10 characters.')
+    assertPasswordLength(input.password)
     let createdUser: PublicUser | null = null
     let createdSessionId = ''
     await this.store.update(async (state) => {
@@ -267,7 +276,7 @@ export class AuthService {
     this.requireAdmin(actor)
     const email = normaliseEmail(input.email)
     const name = input.name.trim() || email.split('@')[0] || 'Leakline user'
-    if (input.password.length < 10) throw new Error('Password must be at least 10 characters.')
+    assertPasswordLength(input.password)
     const role = input.role ?? 'manager'
     assertCreatableRole(actor, role)
     let created: AdminUser | null = null
@@ -357,7 +366,7 @@ export class AuthService {
 
   async acceptInvite(token: string, input: { name: string; password: string }) {
     if (!this.enabled()) throw new Error('Authentication is disabled for this environment.')
-    if (input.password.length < 10) throw new Error('Password must be at least 10 characters.')
+    assertPasswordLength(input.password)
     const name = input.name.trim()
     let acceptedUser: PublicUser | null = null
     let createdSessionId = ''
@@ -442,7 +451,7 @@ export class AuthService {
 
   async resetPassword(actor: PublicUser, userId: string, password: string) {
     this.requireAdmin(actor)
-    if (password.length < 10) throw new Error('Password must be at least 10 characters.')
+    assertPasswordLength(password)
     await this.store.update(async (state) => {
       const user = state.users.find((item) => item.id === userId)
       if (!user) throw new Error('User not found.')

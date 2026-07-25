@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, AudioLines, CalendarDays, CheckCircle2, CreditCard, Database, FlaskConical, Link2, RefreshCw, ShieldCheck, Unplug, X } from 'lucide-react'
-import { mergeIntegrationWorkspace, type ImportWorkspace } from './csvEngine'
+import type { ImportWorkspace } from './csvEngine'
 import type { IntegrationSnapshot as Snapshot, ProviderId, ProviderStatus as Status } from './integrationTypes'
 
-const providerIcons = { highlevel: Database, 'google-calendar': CalendarDays, stripe: CreditCard, fathom: AudioLines }
+const providerIcons = { highlevel: Database, 'google-calendar': CalendarDays, stripe: CreditCard, whop: CreditCard, fanbasis: CreditCard, fathom: AudioLines }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { ...init, headers: { 'Content-Type': 'application/json', ...init?.headers } })
@@ -12,7 +12,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return body
 }
 
-export default function IntegrationPage({ initialWorkspace, onWorkspace, canManage = true, canSync = true }: { initialWorkspace: ImportWorkspace; onWorkspace: (workspace: ImportWorkspace) => void; canManage?: boolean; canSync?: boolean }) {
+export default function IntegrationPage({ onWorkspace, canManage = true, canSync = true }: { onWorkspace: (workspace: ImportWorkspace) => void; canManage?: boolean; canSync?: boolean }) {
   const [snapshot, setSnapshot] = useState<Snapshot>({ workspace: {}, calls: [], statuses: [] })
   const [selected, setSelected] = useState<Status | null>(null)
   const [form, setForm] = useState<Record<string, string>>({})
@@ -33,7 +33,7 @@ export default function IntegrationPage({ initialWorkspace, onWorkspace, canMana
 
   const applySnapshot = (next: Snapshot) => {
     setSnapshot(next)
-    onWorkspace(mergeIntegrationWorkspace(initialWorkspace, next.workspace))
+    onWorkspace(next.workspace)
   }
 
   const connect = async () => {
@@ -50,6 +50,8 @@ export default function IntegrationPage({ initialWorkspace, onWorkspace, canMana
         return
       }
       const payload = selected.id === 'stripe' ? { secretKey: form.secretKey }
+        : selected.id === 'whop' ? { apiKey: form.apiKey, companyId: form.companyId, sandbox: form.environment === 'sandbox' }
+          : selected.id === 'fanbasis' ? { webhookSecret: form.webhookSecret, accountLabel: form.accountLabel }
         : selected.id === 'highlevel' ? { accessToken: form.accessToken, locationId: form.locationId }
           : { apiKey: form.apiKey }
       applySnapshot(await api<Snapshot>(`/api/integrations/${selected.id}/connect`, { method: 'POST', body: JSON.stringify(payload) }))
@@ -95,7 +97,7 @@ export default function IntegrationPage({ initialWorkspace, onWorkspace, canMana
   }
 
   return <section className="integrations-page">
-    <div className="page-heading integrations-heading"><div><p>Continuous monitoring</p><h1>Connect your revenue stack.</h1><span>{canManage ? 'Connected records are normalised into one analysis layer. Credentials are encrypted at rest.' : canSync ? 'You can refresh connected sources, but only admins can add or remove credentials.' : 'This is a read-only view of the connected sources behind this workspace.'}</span></div><div className="integration-heading-actions">{connected > 1 && canSync && <button disabled={Boolean(busy)} onClick={syncAll}><RefreshCw size={14} className={busy === 'sync-all' ? 'spin' : ''} /> Sync all</button>}<div className="integration-summary"><strong>{connected}/4</strong><span>sources connected</span><em>{totalRecords} records synced</em></div></div></div>
+    <div className="page-heading integrations-heading"><div><p>Continuous monitoring</p><h1>Connect your revenue stack.</h1><span>{canManage ? 'Connected records are normalised into one analysis layer. Credentials are encrypted at rest.' : canSync ? 'You can refresh connected sources, but only admins can add or remove credentials.' : 'This is a read-only view of the connected sources behind this workspace.'}</span></div><div className="integration-heading-actions">{connected > 1 && canSync && <button disabled={Boolean(busy)} onClick={syncAll}><RefreshCw size={14} className={busy === 'sync-all' ? 'spin' : ''} /> Sync all</button>}<div className="integration-summary"><strong>{connected}/{snapshot.statuses.length || 6}</strong><span>sources connected</span><em>{totalRecords} records synced</em></div></div></div>
     {error && !selected && <div className="integration-error"><AlertTriangle size={17} /><span>{error}</span><button onClick={() => setError('')}><X size={15} /></button></div>}
     {busy === 'loading' && !snapshot.statuses.length ? <div className="integration-loading"><RefreshCw size={22} className="spin" /><span>Checking integration service…</span></div> : <div className="integration-grid">
       {snapshot.statuses.map((status) => {
@@ -111,8 +113,10 @@ export default function IntegrationPage({ initialWorkspace, onWorkspace, canMana
     </div>}
     <article className="integration-security"><ShieldCheck size={20} /><div><strong>Built with a secure boundary</strong><span>Provider secrets never enter browser storage. OAuth requests use state validation, synced data is encrypted on disk, and every connection requests read-only access where the provider supports it.</span></div></article>
 
-    {selected && <div className="connection-modal-backdrop" onClick={() => setSelected(null)}><section className="connection-modal" onClick={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setSelected(null)}><X size={18} /></button><span className="eyebrow">Connect {selected.category}</span><h2>{selected.label}</h2><p>{selected.id === 'google-calendar' ? selected.available ? 'You will be redirected to Google to grant read-only Calendar access.' : 'First add the OAuth client from Google Cloud. Use http://localhost:8787/api/integrations/google-calendar/callback as the redirect URI.' : 'Your credential is validated before it is encrypted and saved.'}</p>{error && <div className="modal-error"><AlertTriangle size={15} /><span>{error}</span></div>}
+    {selected && <div className="connection-modal-backdrop" onClick={() => setSelected(null)}><section className="connection-modal" onClick={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setSelected(null)}><X size={18} /></button><span className="eyebrow">Connect {selected.category}</span><h2>{selected.label}</h2><p>{selected.id === 'google-calendar' ? selected.available ? 'You will be redirected to Google to grant read-only Calendar access.' : 'First add the OAuth client from Google Cloud. Use http://localhost:8797/api/integrations/google-calendar/callback as the redirect URI.' : 'Your credential is validated before it is encrypted and saved.'}</p>{error && <div className="modal-error"><AlertTriangle size={15} /><span>{error}</span></div>}
       {selected.id === 'stripe' && <label>Restricted or secret API key<input type="password" autoComplete="off" placeholder="rk_test_… or sk_test_…" value={form.secretKey ?? ''} onChange={(event) => setForm({ ...form, secretKey: event.target.value })} /><small>Recommended restricted permissions: Charges read and Invoices read.</small></label>}
+      {selected.id === 'whop' && <><label>Whop company API key<input type="password" autoComplete="off" placeholder="Whop API key" value={form.apiKey ?? ''} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} /></label><label>Company ID<input placeholder="biz_…" value={form.companyId ?? ''} onChange={(event) => setForm({ ...form, companyId: event.target.value })} /></label><label>Environment<select value={form.environment ?? 'production'} onChange={(event) => setForm({ ...form, environment: event.target.value })}><option value="production">Production</option><option value="sandbox">Sandbox account</option></select><small>Whop keeps sandbox and production keys separate.</small></label></>}
+      {selected.id === 'fanbasis' && <><label>Account label<input placeholder="Your FanBasis account" value={form.accountLabel ?? ''} onChange={(event) => setForm({ ...form, accountLabel: event.target.value })} /></label><label>Recovery bridge secret<input type="password" autoComplete="off" placeholder="At least 24 characters" value={form.webhookSecret ?? ''} onChange={(event) => setForm({ ...form, webhookSecret: event.target.value })} /><small>The bridge sends a SHA-256 HMAC of the raw body in the x-leakline-signature header.</small></label><div className="connection-detail blocked"><strong>Provider adapter</strong><span>FanBasis merchant API docs require account access. The signed bridge accepts normalised payment events now without guessing at a private API.</span></div></>}
       {selected.id === 'highlevel' && <><label>Private integration token<input type="password" autoComplete="off" placeholder="GoHighLevel token" value={form.accessToken ?? ''} onChange={(event) => setForm({ ...form, accessToken: event.target.value })} /></label><label>Location ID<input placeholder="Sub-account location ID" value={form.locationId ?? ''} onChange={(event) => setForm({ ...form, locationId: event.target.value })} /></label></>}
       {selected.id === 'google-calendar' && !selected.available && <><label>Google OAuth client ID<input autoComplete="off" placeholder="1234567890-abc.apps.googleusercontent.com" value={form.clientId ?? ''} onChange={(event) => setForm({ ...form, clientId: event.target.value })} /></label><label>Google OAuth client secret<input type="password" autoComplete="off" placeholder="GOCSPX-…" value={form.clientSecret ?? ''} onChange={(event) => setForm({ ...form, clientSecret: event.target.value })} /><small>Stored encrypted in the local Leakline backend, not in browser storage.</small></label></>}
       {selected.id === 'fathom' && <label>Fathom API key<input type="password" autoComplete="off" placeholder="Fathom API key" value={form.apiKey ?? ''} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} /><small>Create this under Fathom User Settings → API Access.</small></label>}

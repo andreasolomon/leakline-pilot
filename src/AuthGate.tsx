@@ -105,7 +105,7 @@ export default function AuthGate({ children }: { children: (props: { user: AuthU
           <form onSubmit={acceptInvite} className="auth-form">
             <label>Email<input readOnly value={invite.email} /></label>
             <label>Name<input autoComplete="name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Your name" /></label>
-            <label>Password<input required type="password" autoComplete="new-password" minLength={10} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder="At least 10 characters" /></label>
+            <label>Password<input required type="password" autoComplete="new-password" minLength={10} maxLength={128} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder="At least 10 characters" /></label>
             {error && <div className="auth-error">{error}</div>}
             <button className="auth-submit" disabled={busy}>{busy ? 'Creating account…' : 'Accept invite'}</button>
           </form>
@@ -146,7 +146,7 @@ export default function AuthGate({ children }: { children: (props: { user: AuthU
           : <form onSubmit={submit} className="auth-form">
               {activeMode === 'signup' && <label>Name<input autoComplete="name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Your name" /></label>}
               <label>Email<input required type="email" autoComplete="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="you@company.com" /></label>
-              <label>Password<input required type="password" autoComplete={activeMode === 'signup' ? 'new-password' : 'current-password'} minLength={activeMode === 'signup' ? 10 : undefined} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder={activeMode === 'signup' ? 'At least 10 characters' : 'Your password'} /></label>
+              <label>Password<input required type="password" autoComplete={activeMode === 'signup' ? 'new-password' : 'current-password'} minLength={activeMode === 'signup' ? 10 : undefined} maxLength={128} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder={activeMode === 'signup' ? 'At least 10 characters' : 'Your password'} /></label>
               {activeMode === 'signup' && meta?.inviteRequired && <label>Invite code<input required autoComplete="off" value={form.inviteCode} onChange={(event) => setForm({ ...form, inviteCode: event.target.value })} placeholder="Private pilot invite code" /></label>}
               {error && <div className="auth-error">{error}</div>}
               <button className="auth-submit" disabled={busy}>{busy ? 'Please wait…' : activeMode === 'signup' ? 'Create account' : 'Log in'}</button>

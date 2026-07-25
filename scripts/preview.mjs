@@ -7,7 +7,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const dataDir = join(root, '.data')
 const pidPath = join(dataDir, 'preview.pid')
 const logPath = join(dataDir, 'preview.log')
-const port = Number(process.env.PORT ?? 8787)
+const port = Number(process.env.PORT ?? 8797)
 const baseUrl = `http://localhost:${port}`
 const healthUrl = `${baseUrl}/api/health`
 

@@ -34,9 +34,11 @@ await store.update((state) => {
       connections: {},
       oauthConfig: {},
       workspace: {},
+      imports: {},
       calls: [],
       oauthStates: {},
       recoveryCases: [],
+      paymentRecoveryCases: [],
     }
     state.workspaces.push(workspace)
   }

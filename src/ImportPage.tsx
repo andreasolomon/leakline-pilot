@@ -41,8 +41,8 @@ const preflight = [
 ]
 
 type ImportPageProps = {
-  onApply: (workspace: ImportWorkspace, alerts: Leak[], sourceMode: 'exports' | 'sandbox') => void
-  onClear?: () => void
+  onApply: (workspace: ImportWorkspace, alerts: Leak[], sourceMode: 'exports' | 'sandbox') => Promise<void>
+  onClear?: () => Promise<void>
   onOpenIntegrations?: () => void
   onSandboxSnapshot?: (snapshot: IntegrationSnapshot) => void
   initialWorkspace?: ImportWorkspace
@@ -61,6 +61,7 @@ export default function ImportPage({ onApply, onClear, onOpenIntegrations, onSan
   const [mappingKind, setMappingKind] = useState<DatasetKind | null>(null)
   const [sandboxing, setSandboxing] = useState(false)
   const [sandboxError, setSandboxError] = useState('')
+  const [saving, setSaving] = useState(false)
   const [sampleStatuses, setSampleStatuses] = useState<string[]>([])
   const inputs = useRef<Partial<Record<DatasetKind, HTMLInputElement | null>>>({})
   const summary = useMemo(() => importSummary(workspace), [workspace])
@@ -110,16 +111,36 @@ export default function ImportPage({ onApply, onClear, onOpenIntegrations, onSan
         setSampleStatuses([...connected])
       }
       setWorkspace(nextWorkspace)
-      if (latestSnapshot) onSandboxSnapshot?.({ ...latestSnapshot, workspace: nextWorkspace })
+      if (latestSnapshot) onSandboxSnapshot?.(latestSnapshot)
     } catch (requestError) {
       setSandboxError(requestError instanceof Error ? requestError.message : 'Sample data preview failed.')
     } finally { setSandboxing(false) }
   }
 
+  const applyWorkspace = async () => {
+    setSaving(true)
+    setSandboxError('')
+    try { await onApply(workspace, alerts, sampleStatuses.some((status) => status.includes('connected')) ? 'sandbox' : 'exports') }
+    catch (requestError) { setSandboxError(requestError instanceof Error ? requestError.message : 'Imported data could not be saved.') }
+    finally { setSaving(false) }
+  }
+
+  const clearWorkspace = async () => {
+    if (!onClear) return
+    setSaving(true)
+    setSandboxError('')
+    try {
+      await onClear()
+      setWorkspace({})
+      setSampleStatuses([])
+    } catch (requestError) { setSandboxError(requestError instanceof Error ? requestError.message : 'Imported data could not be cleared.') }
+    finally { setSaving(false) }
+  }
+
   return <section className="import-page">
     <div className="page-heading section-heading import-heading">
       <div><p>Connect or import</p><h1>Connect or Import Data</h1><span>Connect your operating tools directly, or start from exports. LeakLine normalises both paths before analysing the funnel and prioritising revenue issues.</span></div>
-      <span className="privacy-note"><ShieldCheck size={15} /> Local-first demo workspace</span>
+      <span className="privacy-note"><ShieldCheck size={15} /> Encrypted workspace storage</span>
     </div>
 
     <section className="connect-import-hero panel">
@@ -192,8 +213,8 @@ export default function ImportPage({ onApply, onClear, onOpenIntegrations, onSan
         </div>
         <button className="secondary-button demo-data-button" onClick={loadDemoWorkspace}>Load sample recovery cases</button>
         <p className="demo-data-note">Use this to demonstrate detection, prioritisation and recovery work without live credentials.</p>
-        <button className="primary-button analyse-button" disabled={!summary.records} onClick={() => onApply(workspace, alerts, sampleStatuses.some((status) => status.includes('connected')) ? 'sandbox' : 'exports')}>Run leak detection</button>
-        {summary.records > 0 && <button className="clear-import" onClick={() => { setWorkspace({}); setSampleStatuses([]); onClear?.() }}>Clear imported files</button>}
+        <button className="primary-button analyse-button" disabled={!summary.records || saving} onClick={() => void applyWorkspace()}>{saving ? 'Saving securely…' : 'Run leak detection'}</button>
+        {summary.records > 0 && <button className="clear-import" disabled={saving} onClick={() => void clearWorkspace()}>Clear imported files</button>}
       </aside>
     </div>
   </section>

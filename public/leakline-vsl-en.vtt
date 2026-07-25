@@ -1,0 +1,161 @@
+WEBVTT
+
+00:00.000 --> 00:06.340 line:82% position:50% align:center size:88%
+Hey, it's Andrea here, founder of
+LeakLine. And I'm building LeakLine for
+
+00:06.340 --> 00:10.720 line:82% position:50% align:center size:88%
+high-ticket businesses that already have
+sales coming in, but are losing money
+
+00:10.720 --> 00:16.220 line:82% position:50% align:center size:88%
+after the sale through things like failed
+payments, overdue balances, refund risk,
+
+00:16.800 --> 00:23.020 line:82% position:50% align:center size:88%
+chargebacks or broken payment plans. The
+idea is simple. Before you go and spend
+
+00:23.020 --> 00:29.000 line:82% position:50% align:center size:88%
+more money on leads or more sales calls,
+LeakLine helps you recover revenue that
+
+00:29.000 --> 00:35.340 line:82% position:50% align:center size:88%
+should already be yours. So this is mainly
+for operators, sales ops people, founders
+
+00:35.340 --> 00:41.120 line:82% position:50% align:center size:88%
+or teams running online coaching, info
+products, agency models or high-ticket
+
+00:41.120 --> 00:46.900 line:82% position:50% align:center size:88%
+offers. So if you've got payment plans,
+collections, failed payments, refund
+
+00:46.900 --> 00:50.780 line:82% position:50% align:center size:88%
+requests, or customers simply just
+slipping through the cracks after they
+
+00:50.780 --> 00:57.200 line:82% position:50% align:center size:88%
+buy, this is exactly the kind of thing
+that I'm building for. Now, I've worked in
+
+00:57.200 --> 01:02.060 line:82% position:50% align:center size:88%
+high-ticket sales as a closer, and one
+thing I've noticed is that a lot of
+
+01:02.060 --> 01:08.400 line:82% position:50% align:center size:88%
+attention goes into closing deals, but not
+enough goes into actually protecting the
+
+01:08.400 --> 01:14.520 line:82% position:50% align:center size:88%
+revenue after the close. So a deal may be
+marked as won, but then payments fail,
+
+01:15.080 --> 01:19.940 line:82% position:50% align:center size:88%
+follow-up gets inconsistent, and no one
+knows who owns the recovery. Revenue
+
+01:19.940 --> 01:26.980 line:82% position:50% align:center size:88%
+quietly leaks out. So inside LeakLine, the
+first thing you see is a revenue leak view
+
+01:26.980 --> 01:32.940 line:82% position:50% align:center size:88%
+in the Revenue Recovery Command Center.
+This gives you visibility on where money
+
+01:32.940 --> 01:37.740 line:82% position:50% align:center size:88%
+is at risk. So instead of just seeing
+sales numbers, you can see things like
+
+01:37.740 --> 01:43.560 line:82% position:50% align:center size:88%
+failed payments, overdue cash, refund risk
+or accounts that just simply need follow-up.
+
+01:43.560 --> 01:50.180 line:82% position:50% align:center size:88%
+Now, the goal here isn't just reporting.
+It's to show you what actually
+
+01:50.180 --> 01:57.140 line:82% position:50% align:center size:88%
+needs attention. When I click into a
+recovery case, this is where it gets more
+
+01:57.140 --> 02:04.600 line:82% position:50% align:center size:88%
+useful. You can see the customer or deal,
+what the issue is, the payment processor
+
+02:04.600 --> 02:09.460 line:82% position:50% align:center size:88%
+that was used to process the payment, how
+long they're overdue, how much revenue is
+
+02:09.460 --> 02:16.260 line:82% position:50% align:center size:88%
+at risk, and what needs to happen next. So
+for example, if someone's payment failed
+
+02:16.260 --> 02:20.600 line:82% position:50% align:center size:88%
+or they've missed the payment plan
+instalment, LeakLine turns that into a
+
+02:20.600 --> 02:25.140 line:82% position:50% align:center size:88%
+clear recovery task instead of it just
+sitting somewhere in your payment
+
+02:25.140 --> 02:32.140 line:82% position:50% align:center size:88%
+processor, your Slack, a CRM or just
+someone's memory. And this is the part I
+
+02:32.140 --> 02:38.860 line:82% position:50% align:center size:88%
+care about the most. LeakLine doesn't just
+say you have a revenue leak. It helps
+
+02:38.860 --> 02:45.220 line:82% position:50% align:center size:88%
+create the next action. And that could be
+follow-up with the customer, assigning it
+
+02:45.220 --> 02:50.440 line:82% position:50% align:center size:88%
+to someone on the team, checking whether
+or not it's a refund risk, or just simply
+
+02:50.440 --> 02:56.440 line:82% position:50% align:center size:88%
+moving the case forward once the case is
+recovered. Now, the goal is to make
+
+02:56.440 --> 03:02.520 line:82% position:50% align:center size:88%
+payment recovery more operational, so the
+team knows what to chase, who owns it, and
+
+03:02.520 --> 03:07.900 line:82% position:50% align:center size:88%
+what's already been handled. Now, right
+now, I'm looking for a few high-ticket
+
+03:07.900 --> 03:12.060 line:82% position:50% align:center size:88%
+businesses to test this with. I'm not
+pretending this is some fully polished
+
+03:12.060 --> 03:17.780 line:82% position:50% align:center size:88%
+enterprise platform yet. I'm trying to
+work with real operators, understand where
+
+03:17.780 --> 03:22.460 line:82% position:50% align:center size:88%
+revenue is leaking, and see whether
+LeakLine can actually help recover money
+
+03:22.460 --> 03:28.100 line:82% position:50% align:center size:88%
+that would otherwise be missed. So if you
+run a high-ticket offer and you've dealt
+
+03:28.100 --> 03:35.540 line:82% position:50% align:center size:88%
+with failed payments, refunds, overdue
+balances, or payment plan follow-up, I'd
+
+03:35.540 --> 03:40.660 line:82% position:50% align:center size:88%
+love to get your feedback. You can either
+book in and request a free revenue
+
+03:40.660 --> 03:45.760 line:82% position:50% align:center size:88%
+recovery assessment or get in contact with
+us in the contact section at the bottom of
+
+03:45.760 --> 03:50.020 line:82% position:50% align:center size:88%
+this page, and I'll show you how this
+could apply directly to your setup.

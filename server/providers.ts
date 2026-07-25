@@ -1,4 +1,4 @@
-import type { CallRecord, DatasetImport, FathomCredential, GoogleCredential, HighLevelCredential, NormalizedRow, StripeCredential } from './types.js'
+import type { CallRecord, DatasetImport, FathomCredential, GoogleCredential, HighLevelCredential, NormalizedRow, StripeCredential, WhopCredential } from './types.js'
 
 type Fetcher = typeof fetch
 const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -69,27 +69,165 @@ export async function validateStripe(credential: StripeCredential, fetcher: Fetc
 }
 
 export async function syncStripe(credential: StripeCredential, fetcher: Fetcher = fetch) {
-  type Charge = { id: string; amount: number; amount_refunded: number; currency: string; created: number; paid: boolean; status: string; failure_message?: string; payment_intent?: string; metadata?: Record<string, string>; billing_details?: { name?: string; email?: string } }
-  type Invoice = { id: string; status: string; amount_remaining: number; currency: string; due_date?: number; customer_name?: string; customer_email?: string; metadata?: Record<string, string> }
+  type StripeRef = string | { id: string; last_payment_error?: { code?: string; decline_code?: string; message?: string } }
+  type Charge = { id: string; amount: number; amount_refunded: number; currency: string; created: number; paid: boolean; status: string; failure_code?: string; failure_message?: string; payment_intent?: StripeRef; invoice?: string; customer?: string; metadata?: Record<string, string>; billing_details?: { name?: string; email?: string; phone?: string } }
+  type Invoice = { id: string; status: string; amount_due: number; amount_paid: number; amount_remaining: number; currency: string; created: number; due_date?: number; customer?: string; customer_name?: string; customer_email?: string; attempt_count?: number; next_payment_attempt?: number; hosted_invoice_url?: string; payment_intent?: StripeRef; charge?: string; metadata?: Record<string, string>; status_transitions?: { paid_at?: number } }
   const [charges, invoices] = await Promise.all([
     stripeList<Charge>('charges', credential.secretKey, fetcher),
-    stripeList<Invoice>('invoices?status=open', credential.secretKey, fetcher),
+    stripeList<Invoice>('invoices', credential.secretKey, fetcher),
   ])
   const rows: NormalizedRow[] = []
+  const invoiceIds = new Set(invoices.map((invoice) => invoice.id))
   charges.forEach((charge) => {
     const paidAt = new Date(charge.created * 1000).toISOString()
     const customer = charge.billing_details?.name ?? charge.billing_details?.email ?? 'Stripe customer'
-    const dealId = charge.metadata?.opportunity_id ?? charge.metadata?.deal_id ?? charge.payment_intent ?? null
-    if (charge.paid) rows.push({ id: charge.id, deal_id: dealId, customer, amount: charge.amount / 100, currency: charge.currency.toUpperCase(), status: 'paid', due_at: paidAt, paid_at: paidAt })
-    else rows.push({ id: charge.id, deal_id: dealId, customer, amount: charge.amount / 100, currency: charge.currency.toUpperCase(), status: 'failed', due_at: paidAt, paid_at: null })
+    const paymentIntentId = typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id
+    const dealId = charge.metadata?.opportunity_id ?? charge.metadata?.deal_id ?? paymentIntentId ?? null
+    const base = { id: charge.id, payment_provider: 'stripe', invoice_id: charge.invoice ?? null, payment_intent_id: paymentIntentId ?? null, customer_id: charge.customer ?? null, customer, customer_email: charge.billing_details?.email ?? null, customer_phone: charge.billing_details?.phone ?? null, deal_id: dealId, amount: charge.amount / 100, currency: charge.currency.toUpperCase(), due_at: paidAt }
+    if (!charge.invoice || !invoiceIds.has(charge.invoice)) {
+      if (charge.paid) rows.push({ ...base, status: 'paid', paid_at: paidAt })
+      else rows.push({ ...base, status: 'failed', paid_at: null, failure_code: charge.failure_code ?? null, failure_reason: charge.failure_message ?? null })
+    }
     if (charge.amount_refunded > 0) rows.push({ id: `${charge.id}_refund`, deal_id: dealId, customer, amount: charge.amount_refunded / 100, currency: charge.currency.toUpperCase(), status: 'refunded', due_at: paidAt, paid_at: paidAt })
   })
-  const existing = new Set(rows.map((row) => String(row.id)))
-  invoices.filter((invoice) => invoice.amount_remaining > 0 && invoice.status === 'open').forEach((invoice) => {
-    if (existing.has(invoice.id)) return
-    rows.push({ id: invoice.id, deal_id: invoice.metadata?.opportunity_id ?? invoice.metadata?.deal_id ?? null, customer: invoice.customer_name ?? invoice.customer_email ?? 'Stripe customer', amount: invoice.amount_remaining / 100, currency: invoice.currency.toUpperCase(), status: invoice.due_date && invoice.due_date * 1000 < Date.now() ? 'overdue' : 'unpaid', due_at: invoice.due_date ? new Date(invoice.due_date * 1000).toISOString() : null, paid_at: null })
+  invoices.forEach((invoice) => {
+    const paymentIntentId = typeof invoice.payment_intent === 'string' ? invoice.payment_intent : invoice.payment_intent?.id
+    const error = typeof invoice.payment_intent === 'object' ? invoice.payment_intent.last_payment_error : undefined
+    const paidAt = invoice.status_transitions?.paid_at ? new Date(invoice.status_transitions.paid_at * 1000).toISOString() : null
+    const dueAt = invoice.due_date ? new Date(invoice.due_date * 1000).toISOString() : new Date(invoice.created * 1000).toISOString()
+    const isPaid = invoice.status === 'paid'
+    const amount = (isPaid ? invoice.amount_paid || invoice.amount_due : invoice.amount_remaining || invoice.amount_due) / 100
+    rows.push({
+      id: invoice.id,
+      payment_provider: 'stripe',
+      invoice_id: invoice.id,
+      payment_intent_id: paymentIntentId ?? null,
+      customer_id: invoice.customer ?? null,
+      deal_id: invoice.metadata?.opportunity_id ?? invoice.metadata?.deal_id ?? null,
+      customer: invoice.customer_name ?? invoice.customer_email ?? 'Stripe customer',
+      customer_email: invoice.customer_email ?? null,
+      amount,
+      currency: invoice.currency.toUpperCase(),
+      status: isPaid ? 'paid' : invoice.status === 'open' && Date.parse(dueAt) < Date.now() ? 'overdue' : invoice.status === 'open' ? 'pending' : invoice.status,
+      due_at: dueAt,
+      paid_at: paidAt,
+      failure_code: error?.decline_code ?? error?.code ?? null,
+      failure_reason: error?.message ?? null,
+      attempt_count: invoice.attempt_count ?? 0,
+      next_retry_at: invoice.next_payment_attempt ? new Date(invoice.next_payment_attempt * 1000).toISOString() : null,
+      hosted_invoice_url: invoice.hosted_invoice_url ?? null,
+    })
   })
   return dataset('payments', 'Stripe', rows)
+}
+
+type WhopPayment = {
+  id: string
+  status?: string | null
+  substatus?: string
+  retryable?: boolean
+  created_at: string
+  updated_at?: string
+  paid_at?: string | null
+  last_payment_attempt?: string | null
+  next_payment_attempt?: string | null
+  currency?: string | null
+  total?: number | null
+  usd_total?: number | null
+  payments_failed?: number | null
+  failure_message?: string | null
+  metadata?: Record<string, unknown>
+  user?: Record<string, unknown> | null
+  member?: Record<string, unknown> | null
+  membership?: Record<string, unknown> | null
+}
+
+const whopBaseUrl = (sandbox: boolean) => sandbox ? 'https://sandbox-api.whop.com/api/v1' : 'https://api.whop.com/api/v1'
+const whopHeaders = (apiKey: string) => ({ Authorization: `Bearer ${apiKey}`, Accept: 'application/json' })
+
+function whopPaymentRow(payment: WhopPayment): NormalizedRow {
+  const user = payment.user ?? payment.member ?? {}
+  const membership = payment.membership ?? {}
+  const firstName = String(user.first_name ?? user.firstName ?? '')
+  const lastName = String(user.last_name ?? user.lastName ?? '')
+  const customer = String(user.name || `${firstName} ${lastName}`.trim() || user.username || user.email || 'Whop customer')
+  const substatus = String(payment.substatus ?? payment.status ?? '').toLowerCase()
+  const status = substatus === 'succeeded' ? 'paid' : substatus === 'past_due' ? 'overdue' : substatus === 'failed' || payment.status === 'open' ? 'failed' : substatus
+  return {
+    id: payment.id,
+    invoice_id: payment.id,
+    payment_provider: 'whop',
+    customer_id: String(user.id ?? membership.id ?? ''),
+    customer,
+    customer_email: String(user.email ?? ''),
+    customer_phone: String(user.phone ?? user.phone_number ?? ''),
+    deal_id: String(payment.metadata?.opportunity_id ?? payment.metadata?.deal_id ?? ''),
+    amount: Number(payment.total ?? payment.usd_total ?? 0),
+    currency: String(payment.currency ?? 'usd').toUpperCase(),
+    status,
+    due_at: payment.last_payment_attempt ?? payment.created_at,
+    paid_at: payment.paid_at ?? null,
+    failure_reason: payment.failure_message ?? null,
+    attempt_count: Number(payment.payments_failed ?? 0),
+    next_retry_at: payment.next_payment_attempt ?? null,
+    retryable: Boolean(payment.retryable),
+    hosted_invoice_url: String(membership.manage_url ?? membership.manageUrl ?? ''),
+  }
+}
+
+export async function validateWhop(credential: WhopCredential, fetcher: Fetcher = fetch) {
+  const url = new URL(`${whopBaseUrl(credential.sandbox)}/payments`)
+  url.searchParams.set('company_id', credential.companyId)
+  url.searchParams.set('first', '1')
+  await jsonRequest<{ data: WhopPayment[] }>(url.toString(), { headers: whopHeaders(credential.apiKey) }, fetcher)
+  return { accountLabel: `${credential.companyId}${credential.sandbox ? ' · sandbox' : ''}` }
+}
+
+export async function syncWhop(credential: WhopCredential, fetcher: Fetcher = fetch) {
+  const rows: NormalizedRow[] = []
+  let after = ''
+  for (let page = 0; page < 20; page += 1) {
+    const url = new URL(`${whopBaseUrl(credential.sandbox)}/payments`)
+    url.searchParams.set('company_id', credential.companyId)
+    url.searchParams.set('first', '100')
+    url.searchParams.set('direction', 'desc')
+    url.searchParams.set('order', 'created_at')
+    if (after) url.searchParams.set('after', after)
+    const result = await jsonRequest<{ data: WhopPayment[]; page_info?: { has_next_page?: boolean; end_cursor?: string } }>(url.toString(), { headers: whopHeaders(credential.apiKey) }, fetcher)
+    rows.push(...result.data.map(whopPaymentRow))
+    if (!result.page_info?.has_next_page || !result.page_info.end_cursor) break
+    after = result.page_info.end_cursor
+  }
+  return dataset('payments', 'Whop', rows)
+}
+
+export function normalizeFanBasisPayment(input: Record<string, unknown>): NormalizedRow {
+  const rawStatus = String(input.status ?? '').toLowerCase()
+  const status = ['success', 'succeeded', 'complete', 'completed'].includes(rawStatus) ? 'paid'
+    : ['declined', 'failure', 'failed'].includes(rawStatus) ? 'failed'
+      : ['past_due', 'past due', 'late'].includes(rawStatus) ? 'overdue'
+        : rawStatus
+  return {
+    id: String(input.id ?? input.transaction_id ?? input.payment_id ?? ''),
+    invoice_id: String(input.invoice_id ?? input.transaction_id ?? input.payment_id ?? input.id ?? ''),
+    payment_provider: 'fanbasis',
+    customer_id: String(input.customer_id ?? input.user_id ?? ''),
+    customer: String(input.customer_name ?? input.name ?? input.email ?? 'FanBasis customer'),
+    customer_email: String(input.customer_email ?? input.email ?? ''),
+    customer_phone: String(input.customer_phone ?? input.phone ?? ''),
+    deal_id: String(input.opportunity_id ?? input.deal_id ?? ''),
+    amount: Number(input.amount ?? input.amount_due ?? 0),
+    currency: String(input.currency ?? 'USD').toUpperCase(),
+    status,
+    due_at: String(input.due_at ?? input.due_date ?? input.created_at ?? ''),
+    paid_at: input.paid_at ? String(input.paid_at) : null,
+    failure_code: input.failure_code ? String(input.failure_code) : null,
+    failure_reason: input.failure_reason ?? input.failure_message ? String(input.failure_reason ?? input.failure_message) : null,
+    attempt_count: Number(input.attempt_count ?? input.payments_failed ?? 0),
+    next_retry_at: input.next_retry_at ? String(input.next_retry_at) : null,
+    retryable: Boolean(input.retryable),
+    hosted_invoice_url: String(input.hosted_invoice_url ?? input.payment_link ?? input.manage_url ?? ''),
+  }
 }
 
 const highLevelHeaders = (token: string) => ({ Authorization: `Bearer ${token}`, Accept: 'application/json', Version: '2021-07-28' })
@@ -126,7 +264,7 @@ export async function syncHighLevel(credential: HighLevelCredential, fetcher: Fe
     const name = String(user.name ?? '').trim() || `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || String(user.email ?? 'Unassigned')
     return [String(user.id ?? ''), name]
   }))
-  const leads = contacts.map((contact) => ({ id: String(contact.id ?? ''), name: String(contact.contactName ?? contact.name ?? `${contact.firstName ?? ''} ${contact.lastName ?? ''}`.trim()), email: String(contact.email ?? ''), source: String(contact.source ?? 'GoHighLevel'), status: String(contact.type ?? 'new'), owner: userNames.get(String(contact.assignedTo ?? '')) ?? 'Unassigned', created_at: String(contact.dateAdded ?? contact.createdAt ?? ''), last_activity_at: String(contact.dateUpdated ?? contact.updatedAt ?? '') || null }))
+  const leads = contacts.map((contact) => ({ id: String(contact.id ?? ''), name: String(contact.contactName ?? contact.name ?? `${contact.firstName ?? ''} ${contact.lastName ?? ''}`.trim()), email: String(contact.email ?? ''), phone: String(contact.phone ?? ''), source: String(contact.source ?? 'GoHighLevel'), status: String(contact.type ?? 'new'), owner: userNames.get(String(contact.assignedTo ?? '')) ?? 'Unassigned', created_at: String(contact.dateAdded ?? contact.createdAt ?? ''), last_activity_at: String(contact.dateUpdated ?? contact.updatedAt ?? '') || null }))
   const deals = opportunities.map((opportunity) => {
     const status = String(opportunity.status ?? 'open').toLowerCase()
     const contact = opportunity.contact as Record<string, unknown> | undefined
@@ -139,6 +277,18 @@ export async function syncHighLevel(credential: HighLevelCredential, fetcher: Fe
     return { id: String(user.id ?? ''), name, email: String(user.email ?? ''), calls: 0, close_rate: owned.length ? Math.round(won / owned.length * 1000) / 10 : 0, active: !user.deleted }
   })
   return { leads: dataset('leads', 'GoHighLevel', leads), deals: dataset('deals', 'GoHighLevel', deals), closers: dataset('closers', 'GoHighLevel', closerRows) }
+}
+
+export async function sendHighLevelRecoveryMessage(credential: HighLevelCredential, input: { contactId: string; channel: 'sms' | 'email'; body: string; subject?: string; fromEmail?: string; fromNumber?: string }, fetcher: Fetcher = fetch) {
+  const payload = input.channel === 'sms'
+    ? { type: 'SMS', contactId: input.contactId, message: input.body, status: 'pending', ...(input.fromNumber ? { fromNumber: input.fromNumber } : {}) }
+    : { type: 'Email', contactId: input.contactId, subject: input.subject ?? 'Payment follow-up', html: input.body.replace(/\n/g, '<br>'), message: input.body, status: 'pending', ...(input.fromEmail ? { emailFrom: input.fromEmail } : {}) }
+  const result = await jsonRequest<{ messageId?: string; conversationId?: string; id?: string }>('https://services.leadconnectorhq.com/conversations/messages', {
+    method: 'POST',
+    headers: { ...highLevelHeaders(credential.accessToken), 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }, fetcher)
+  return { messageId: result.messageId ?? result.id, conversationId: result.conversationId }
 }
 
 async function validGoogleToken(credential: GoogleCredential, clientId: string, clientSecret: string, fetcher: Fetcher) {

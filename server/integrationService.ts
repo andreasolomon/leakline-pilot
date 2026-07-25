@@ -1,14 +1,17 @@
 import { randomBytes } from 'node:crypto'
 import type { EncryptedStore } from './store.js'
 import type { CredentialMap, ProviderId, ProviderStatus, StoreState, WorkspaceRecord } from './types.js'
-import { syncFathom, syncGoogleCalendar, syncHighLevel, syncStripe, validateFathom, validateHighLevel, validateStripe } from './providers.js'
+import { syncFathom, syncGoogleCalendar, syncHighLevel, syncStripe, syncWhop, validateFathom, validateHighLevel, validateStripe, validateWhop } from './providers.js'
 import { safeErrorMessage } from './safety.js'
 import { sandboxSync } from './sandbox.js'
+import { reconcilePaymentRecoveryCases } from './paymentRecovery.js'
 
 const definitions: Array<Pick<ProviderStatus, 'id' | 'label' | 'category' | 'description'>> = [
   { id: 'highlevel', label: 'GoHighLevel', category: 'CRM', description: 'Contacts, opportunities and sales owners.' },
   { id: 'google-calendar', label: 'Google Calendar', category: 'Calendar', description: 'Bookings and attendee matching through read-only OAuth.' },
   { id: 'stripe', label: 'Stripe', category: 'Payments', description: 'Successful, failed, overdue and refunded payments.' },
+  { id: 'whop', label: 'Whop', category: 'Payments', description: 'Payment plans, failed charges, retry state and recovered payments.' },
+  { id: 'fanbasis', label: 'FanBasis', category: 'Payments', description: 'Payment-plan events through a signed recovery webhook bridge.' },
   { id: 'fathom', label: 'Fathom', category: 'Calls', description: 'Recorded calls, participants, summaries and transcripts.' },
 ]
 
@@ -45,6 +48,8 @@ export class IntegrationService {
   async connect<K extends Exclude<ProviderId, 'google-calendar'>>(workspaceId: string, provider: K, credential: CredentialMap[K]) {
     let validation: { accountLabel: string }
     if (provider === 'stripe') validation = await validateStripe(credential as CredentialMap['stripe'], this.fetcher)
+    else if (provider === 'whop') validation = await validateWhop(credential as CredentialMap['whop'], this.fetcher)
+    else if (provider === 'fanbasis') validation = { accountLabel: (credential as CredentialMap['fanbasis']).accountLabel || 'FanBasis webhook bridge' }
     else if (provider === 'highlevel') validation = await validateHighLevel(credential as CredentialMap['highlevel'], this.fetcher)
     else validation = await validateFathom(credential as CredentialMap['fathom'], this.fetcher)
     await this.store.update((state) => {
@@ -60,7 +65,7 @@ export class IntegrationService {
       const workspace = this.getWorkspace(state, workspaceId)
       delete workspace.credentials[provider]
       delete workspace.connections[provider]
-      if (provider === 'stripe') delete workspace.workspace.payments
+      if (provider === 'stripe' || provider === 'whop' || provider === 'fanbasis') this.removePaymentProvider(workspace, provider)
       if (provider === 'highlevel') { delete workspace.workspace.leads; delete workspace.workspace.deals; delete workspace.workspace.closers }
       if (provider === 'google-calendar') delete workspace.workspace.appointments
       if (provider === 'fathom') workspace.calls = []
@@ -79,10 +84,15 @@ export class IntegrationService {
     try {
       if (provider === 'stripe') {
         const payments = await syncStripe(credential as CredentialMap['stripe'], this.fetcher)
-        await this.store.update((next) => { const target = this.getWorkspace(next, workspaceId); target.workspace.payments = payments; this.markSynced(target, provider, { payments: payments.rows.length }) })
+        await this.store.update((next) => { const target = this.getWorkspace(next, workspaceId); this.mergePaymentProvider(target, provider, payments); reconcilePaymentRecoveryCases(target); this.markSynced(target, provider, { payments: payments.rows.length }) })
+      } else if (provider === 'whop') {
+        const payments = await syncWhop(credential as CredentialMap['whop'], this.fetcher)
+        await this.store.update((next) => { const target = this.getWorkspace(next, workspaceId); this.mergePaymentProvider(target, provider, payments); reconcilePaymentRecoveryCases(target); this.markSynced(target, provider, { payments: payments.rows.length }) })
+      } else if (provider === 'fanbasis') {
+        await this.store.update((next) => { const target = this.getWorkspace(next, workspaceId); reconcilePaymentRecoveryCases(target); this.markSynced(target, provider, { payments: target.workspace.payments?.rows.filter((row) => row.payment_provider === 'fanbasis').length ?? 0 }) })
       } else if (provider === 'highlevel') {
         const result = await syncHighLevel(credential as CredentialMap['highlevel'], this.fetcher)
-        await this.store.update((next) => { const target = this.getWorkspace(next, workspaceId); Object.assign(target.workspace, result); this.markSynced(target, provider, { leads: result.leads.rows.length, deals: result.deals.rows.length, closers: result.closers.rows.length }) })
+        await this.store.update((next) => { const target = this.getWorkspace(next, workspaceId); Object.assign(target.workspace, result); reconcilePaymentRecoveryCases(target); this.markSynced(target, provider, { leads: result.leads.rows.length, deals: result.deals.rows.length, closers: result.closers.rows.length }) })
       } else if (provider === 'google-calendar') {
         const config = this.googleConfig(workspace)
         if (!config) throw new Error('Google OAuth credentials are not configured. Open Google Calendar in Integrations and add the app client ID and client secret first.')
@@ -106,7 +116,7 @@ export class IntegrationService {
     const result = await sandboxSync(provider)
     await this.store.update((state) => {
       const workspace = this.getWorkspace(state, workspaceId)
-      if (provider === 'stripe') workspace.workspace.payments = result.workspace.payments
+      if ((provider === 'stripe' || provider === 'whop' || provider === 'fanbasis') && result.workspace.payments) { this.mergePaymentProvider(workspace, provider, result.workspace.payments); reconcilePaymentRecoveryCases(workspace) }
       if (provider === 'highlevel') { workspace.workspace.leads = result.workspace.leads; workspace.workspace.deals = result.workspace.deals; workspace.workspace.closers = result.workspace.closers }
       if (provider === 'google-calendar') workspace.workspace.appointments = result.workspace.appointments
       if (provider === 'fathom') workspace.calls = result.calls ?? []
@@ -122,6 +132,21 @@ export class IntegrationService {
     meta.lastSyncAt = new Date().toISOString()
     meta.lastError = undefined
     meta.recordCounts = recordCounts
+  }
+
+  private mergePaymentProvider(workspace: WorkspaceRecord, provider: 'stripe' | 'whop' | 'fanbasis', incoming: NonNullable<WorkspaceRecord['workspace']['payments']>) {
+    const existing = workspace.workspace.payments?.rows.filter((row) => row.payment_provider !== provider) ?? []
+    const rows = [...existing, ...incoming.rows.map((row) => ({ ...row, payment_provider: provider }))]
+    const fields = [...new Set(rows.flatMap((row) => Object.keys(row)))]
+    workspace.workspace.payments = { ...incoming, fileName: 'Connected payment providers', rows, sourceRows: rows.length, mappedFields: fields, headers: fields, mapping: Object.fromEntries(fields.map((field) => [field, field])) }
+  }
+
+  private removePaymentProvider(workspace: WorkspaceRecord, provider: 'stripe' | 'whop' | 'fanbasis') {
+    const current = workspace.workspace.payments
+    if (!current) return
+    const rows = current.rows.filter((row) => row.payment_provider !== provider)
+    if (!rows.length) delete workspace.workspace.payments
+    else workspace.workspace.payments = { ...current, rows, sourceRows: rows.length }
   }
 
   async snapshot(workspaceId: string) {
@@ -166,11 +191,12 @@ export class IntegrationService {
     return url.toString()
   }
 
-  async finishGoogleAuthorization(code: string, returnedState: string) {
+  async finishGoogleAuthorization(code: string, returnedState: string, allowedWorkspaceIds: ReadonlySet<string>) {
     const redirectUri = process.env.GOOGLE_REDIRECT_URI ?? `${process.env.APP_BASE_URL ?? 'http://127.0.0.1:8787'}/api/integrations/google-calendar/callback`
     const state = await this.store.read()
     const workspace = state.workspaces.find((item) => item.oauthStates['google-calendar']?.value === returnedState)
     if (!workspace) throw new Error('Google OAuth state is invalid or expired.')
+    if (!allowedWorkspaceIds.has(workspace.id)) throw new Error('Workspace access denied for this Google Calendar connection.')
     const config = this.googleConfig(workspace)
     if (!config) throw new Error('Google OAuth credentials are not configured.')
     const expected = workspace.oauthStates['google-calendar']

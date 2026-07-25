@@ -70,6 +70,15 @@ describe('imported analytics', () => {
     expect(importedDataHealth(workspace).every((source) => source.status === 'Healthy')).toBe(true)
   })
 
+  it('keeps an empty client workspace empty instead of substituting demo analytics', () => {
+    expect(importedFunnel({})).toEqual([])
+    expect(importedRevenueTrend({}, 'This month')).toEqual([])
+    expect(importedCloserHealth({})).toEqual([])
+    expect(importedRecoveryQueue({})).toEqual([])
+    expect(importedDataHealth({})).toHaveLength(5)
+    expect(importedDataHealth({}).every((source) => source.status === 'Missing' && source.records === '0 records')).toBe(true)
+  })
+
   it('filters dated rows to the selected window', () => {
     const leads = normaliseCsv('leads', 'leads.csv', [
       'lead_id,full_name,created_date',

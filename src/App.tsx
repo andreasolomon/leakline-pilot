@@ -33,6 +33,7 @@ import type { IntegrationSnapshot, ProviderStatus } from './integrationTypes'
 import type { AuthRole, AuthUser, AuthWorkspace } from './AuthGate'
 import RecoveryCaseDrawer from './RecoveryCaseDrawer'
 import { recoveryCaseRequest, recoveryStatusLabels, type RecoveryCase, type RecoveryCaseUpdate } from './recoveryCases'
+import PaymentRecoveryPage from './PaymentRecoveryPage'
 
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 const workspaceStorageKey = 'leakline-v1-workspace'
@@ -85,7 +86,7 @@ function paymentDate(row: Record<string, unknown>) {
 type FunnelStage = (typeof funnel)[number]
 
 export function importedFunnel(workspace: ImportWorkspace): FunnelStage[] {
-  if (!Object.keys(workspace).length) return funnel
+  if (!Object.keys(workspace).length) return []
   const leads = workspace.leads?.rows ?? []
   const appointments = workspace.appointments?.rows ?? []
   const deals = workspace.deals?.rows ?? []
@@ -130,7 +131,7 @@ const numberValue = (value: unknown) => typeof value === 'number' ? value : 0
 const daysSince = (value: unknown) => typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? Math.max(0, Math.floor((Date.now() - Date.parse(value)) / 86400000)) : 0
 
 export function importedRevenueTrend(workspace: ImportWorkspace, period: Period): RevenueTrendPoint[] {
-  if (!Object.keys(workspace).length) return trendByPeriod[period]
+  if (!Object.keys(workspace).length) return []
   const payments = workspace.payments?.rows ?? []
   const byDate = new Map<string, typeof payments>()
   payments.forEach((row) => {
@@ -159,7 +160,7 @@ export function importedRevenueTrend(workspace: ImportWorkspace, period: Period)
 }
 
 export function importedCloserHealth(workspace: ImportWorkspace): CloserHealthRow[] {
-  if (!Object.keys(workspace).length) return reps
+  if (!Object.keys(workspace).length) return []
   const closers = workspace.closers?.rows ?? []
   const deals = workspace.deals?.rows ?? []
   const payments = workspace.payments?.rows ?? []
@@ -186,7 +187,7 @@ export function importedCloserHealth(workspace: ImportWorkspace): CloserHealthRo
 }
 
 export function importedRecoveryQueue(workspace: ImportWorkspace): RecoveryItem[] {
-  if (!Object.keys(workspace).length) return recoveryQueue
+  if (!Object.keys(workspace).length) return []
   const deals = workspace.deals?.rows ?? []
   const payments = workspace.payments?.rows ?? []
   const dealById = new Map(deals.map((deal) => [textValue(deal.id), deal]))
@@ -336,7 +337,6 @@ export function funnelActionCue(dropLabel: string, records = 0): FunnelActionCue
 type DataHealthItem = { source: string; status: string; detail: string; records: string }
 
 export function importedDataHealth(workspace: ImportWorkspace): DataHealthItem[] {
-  if (!Object.keys(workspace).length) return sourceHealth
   return (Object.keys(datasetConfig) as Array<keyof typeof datasetConfig>).map((kind) => {
     const item = workspace[kind]
     if (!item) return { source: datasetConfig[kind].label, status: 'Missing', detail: 'No CSV imported', records: '0 records' }
@@ -373,13 +373,13 @@ export function dataSourceConfidence(workspace: ImportWorkspace, statuses: Provi
 
   const crmConnected = connected('highlevel') || has('leads') || has('deals')
   const calendarConnected = connected('google-calendar') || has('appointments')
-  const paymentConnected = connected('stripe') || has('payments')
+  const paymentConnected = connected('stripe') || connected('whop') || connected('fanbasis') || has('payments')
   const callsConnected = connected('fathom') || callCount > 0
   const teamConnected = has('closers')
 
   if (crmConnected) connectedSources.push(statusById.get('highlevel')?.label ?? 'CRM exports')
   else missingSources.push('CRM')
-  if (paymentConnected) connectedSources.push(statusById.get('stripe')?.label ?? 'Payment exports')
+  if (paymentConnected) connectedSources.push(statusById.get('stripe')?.connected ? 'Stripe' : statusById.get('whop')?.connected ? 'Whop' : statusById.get('fanbasis')?.connected ? 'FanBasis' : 'Payment exports')
   else missingSources.push('Payments')
   if (calendarConnected) connectedSources.push(statusById.get('google-calendar')?.label ?? 'Calendar exports')
   else missingSources.push('Calendar')
@@ -424,16 +424,29 @@ function readSavedWorkspace(workspaceId: string): ImportWorkspace {
   catch { return {} }
 }
 
-function saveWorkspace(workspaceId: string, workspace: ImportWorkspace) {
-  try {
-    const compact = Object.fromEntries(Object.entries(workspace).map(([kind, item]) => [kind, { ...item, sourceText: undefined }]))
-    localStorage.setItem(scopedStorageKey(workspaceStorageKey, workspaceId), JSON.stringify(compact))
-  } catch { /* Storage can be unavailable in private browsing. */ }
-}
-
 function clearSavedWorkspace(workspaceId: string) {
   try { localStorage.removeItem(scopedStorageKey(workspaceStorageKey, workspaceId)) }
   catch { /* Storage can be unavailable in private browsing. */ }
+}
+
+function compactImportWorkspace(workspace: ImportWorkspace): ImportWorkspace {
+  return Object.fromEntries(Object.entries(workspace).map(([kind, item]) => [kind, { ...item, sourceText: undefined }])) as ImportWorkspace
+}
+
+function manualImportsFromWorkspace(workspace: ImportWorkspace, liveWorkspace: ImportWorkspace = {}): ImportWorkspace {
+  return Object.fromEntries(Object.entries(workspace).filter(([kind, item]) => {
+    if (!item) return false
+    const live = liveWorkspace[kind as keyof ImportWorkspace]
+    if (live && JSON.stringify({ ...item, sourceText: undefined }) === JSON.stringify(live)) return false
+    return !/\b(?:live|sandbox) sync$/i.test(item.fileName)
+  }).map(([kind, item]) => [kind, { ...item, sourceText: undefined }])) as ImportWorkspace
+}
+
+async function importWorkspaceRequest(path = '/api/imports', init?: RequestInit) {
+  const response = await fetch(path, { ...init, headers: { 'Content-Type': 'application/json', ...init?.headers } })
+  const body = await response.json().catch(() => ({})) as { workspace?: ImportWorkspace; error?: string }
+  if (!response.ok) throw new Error(body.error ?? `Import storage request failed with status ${response.status}.`)
+  return body.workspace ?? {}
 }
 
 function readSavedResolvedRecovery(workspaceId: string) {
@@ -531,7 +544,7 @@ function LeakRow({ leak, onOpen, reviewed = false, recoveryCase }: { leak: Leak;
   )
 }
 
-function PaymentLedger({ workspace }: { workspace: ImportWorkspace }) {
+function PaymentLedger({ workspace, demoMode = false }: { workspace: ImportWorkspace; demoMode?: boolean }) {
   const hasImportedWorkspace = Object.keys(workspace).length > 0
   const importedPayments = workspace.payments?.rows
   const rows = importedPayments?.map((row, index) => ({
@@ -541,7 +554,7 @@ function PaymentLedger({ workspace }: { workspace: ImportWorkspace }) {
     amount: typeof row.amount === 'number' ? row.amount : 0,
     date: paymentDate(row),
     state: paymentState(row),
-  })) ?? (!hasImportedWorkspace ? paymentEvents.map((event, index) => ({ ...event, key: `${event.customer}-${index}`, state: event.status as PaymentState })) : [])
+  })) ?? (demoMode && !hasImportedWorkspace ? paymentEvents.map((event, index) => ({ ...event, key: `${event.customer}-${index}`, state: event.status as PaymentState })) : [])
   const confirmedLost = rows.filter((row) => row.state === 'Confirmed lost').reduce((sum, row) => sum + row.amount, 0)
   const atRisk = rows.filter((row) => row.state === 'At risk').reduce((sum, row) => sum + row.amount, 0)
 
@@ -570,7 +583,7 @@ function CloserHealthTable({ rows }: { rows: CloserHealthRow[] }) {
   </table></div>
 }
 
-function SectionPage({ section, onOpenLeak, alertData = leaks, workspace = {}, funnelData = funnel, closerData = reps, recoveryData = recoveryQueue, healthData = sourceHealth, onResolveRecovery, reviewedLeaks = new Set<number>(), recoveryCases = [], canAct = true }: { section: string; onOpenLeak: (leak: Leak) => void; alertData?: Leak[]; workspace?: ImportWorkspace; funnelData?: FunnelStage[]; closerData?: CloserHealthRow[]; recoveryData?: RecoveryItem[]; healthData?: DataHealthItem[]; onResolveRecovery?: (item: RecoveryItem) => void; reviewedLeaks?: Set<number>; recoveryCases?: RecoveryCase[]; canAct?: boolean }) {
+function SectionPage({ section, onOpenLeak, alertData = [], workspace = {}, funnelData = [], closerData = [], recoveryData = [], healthData = [], demoMode = false, onResolveRecovery, reviewedLeaks = new Set<number>(), recoveryCases = [], canAct = true }: { section: string; onOpenLeak: (leak: Leak) => void; alertData?: Leak[]; workspace?: ImportWorkspace; funnelData?: FunnelStage[]; closerData?: CloserHealthRow[]; recoveryData?: RecoveryItem[]; healthData?: DataHealthItem[]; demoMode?: boolean; onResolveRecovery?: (item: RecoveryItem) => void; reviewedLeaks?: Set<number>; recoveryCases?: RecoveryCase[]; canAct?: boolean }) {
   const copy: Record<string, [string, string]> = {
     'Leak feed': ['Leak feed', 'Detected revenue issues ranked by financial impact, with the records and actions needed to address them.'],
     Funnel: ['Funnel analysis', 'Locate the largest stage drop-offs, understand the likely cause and choose the next corrective test.'],
@@ -587,7 +600,8 @@ function SectionPage({ section, onOpenLeak, alertData = leaks, workspace = {}, f
   })).sort((left, right) => right.records - left.records)[0]
   const funnelCue = funnelActionCue(largestDrop?.label ?? '', largestDrop?.records ?? 0)
   const attendanceLeak = alertData.find((leak) => leak.type === 'Attendance')
-  const demoAttendanceRows = !Object.keys(workspace).length ? leaks.find((leak) => leak.type === 'Attendance')?.breakdown ?? [] : []
+  const hasWorkspaceData = Object.keys(workspace).length > 0
+  const demoAttendanceRows = demoMode && !hasWorkspaceData ? leaks.find((leak) => leak.type === 'Attendance')?.breakdown ?? [] : []
   const campaignRows = attendanceLeak?.breakdown ?? demoAttendanceRows
   const campaignValues = campaignRows.map((row) => ({ ...row, numericValue: Number.parseFloat(row.current) })).filter((row) => Number.isFinite(row.numericValue))
   const bestCampaign = campaignValues.slice().sort((left, right) => right.numericValue - left.numericValue)[0]
@@ -595,18 +609,20 @@ function SectionPage({ section, onOpenLeak, alertData = leaks, workspace = {}, f
   const openLeakCount = alertData.filter((leak) => recoveryCases.find((item) => item.leakId === leak.id)?.status !== 'resolved').length
   return <section className="section-page">
     <div className="page-heading section-heading"><div><p>Workspace</p><h1>{title}</h1><span>{subtitle}</span></div></div>
-    {section === 'Leak feed' && <article className="panel full-panel recovery-case-feed"><div className="panel-head"><div><span className="eyebrow">{openLeakCount} open leak{openLeakCount === 1 ? '' : 's'}</span><h2>Prioritised by revenue at risk</h2></div><span className="live-pill"><i /> {Object.keys(workspace).length ? 'Imported' : 'Live'}</span></div>{alertData.length ? <div className="leak-list">{alertData.slice().sort((left, right) => { const leftResolved = recoveryCases.find((item) => item.leakId === left.id)?.status === 'resolved'; const rightResolved = recoveryCases.find((item) => item.leakId === right.id)?.status === 'resolved'; return Number(leftResolved) - Number(rightResolved) || right.impact - left.impact }).map((leak) => <LeakRow key={leak.id} leak={leak} onOpen={onOpenLeak} reviewed={reviewedLeaks.has(leak.id)} recoveryCase={recoveryCases.find((item) => item.leakId === leak.id)} />)}</div> : <div className="empty-alerts"><CheckCircle2 size={24} /><h3>No leaks detected</h3><p>The imported records passed the current checks.</p></div>}</article>}
+    {section === 'Leak feed' && <article className="panel full-panel recovery-case-feed"><div className="panel-head"><div><span className="eyebrow">{openLeakCount} open leak{openLeakCount === 1 ? '' : 's'}</span><h2>Prioritised by revenue at risk</h2></div><span className="live-pill"><i /> {demoMode ? 'Sample' : hasWorkspaceData ? 'Imported' : 'No data'}</span></div>{alertData.length ? <div className="leak-list">{alertData.slice().sort((left, right) => { const leftResolved = recoveryCases.find((item) => item.leakId === left.id)?.status === 'resolved'; const rightResolved = recoveryCases.find((item) => item.leakId === right.id)?.status === 'resolved'; return Number(leftResolved) - Number(rightResolved) || right.impact - left.impact }).map((leak) => <LeakRow key={leak.id} leak={leak} onOpen={onOpenLeak} reviewed={reviewedLeaks.has(leak.id)} recoveryCase={recoveryCases.find((item) => item.leakId === leak.id)} />)}</div> : <div className="empty-alerts"><FileUp size={24} /><h3>No leak evidence connected</h3><p>{hasWorkspaceData ? 'The available records passed the current checks.' : 'Connect or import client data before LeakLine runs leak detection.'}</p></div>}</article>}
     {section === 'Funnel' && <div className="section-grid funnel-analysis-grid">
       <article className="panel funnel-analysis-card">
-        <div className="panel-head"><div><span className="eyebrow">{Object.keys(workspace).length ? 'Imported funnel data' : 'Current period'}</span><h2>Stage conversion and drop-offs</h2></div></div>
-        <div className="funnel-list">{funnelData.map((stage, index) => <div className="funnel-row" key={stage.label}><div><span>{stage.label}</span><strong>{stage.value}</strong></div><div className="funnel-track"><i style={{ width: `${stage.value / Math.max(funnelData[0].value, 1) * 100}%`, background: stage.color }} /></div><small>{index ? `${stage.rate}%` : '—'}</small></div>)}</div>
-        <div className="funnel-note"><AlertTriangle size={16} /><span><strong>Largest drop:</strong> {largestDrop?.label ?? 'No stage data'}</span><em>{largestDrop?.records ?? 0} records</em></div>
-        <div className="funnel-action-card">
-          <span className="eyebrow"><Target size={13} /> Recommended response</span>
-          <h3>{funnelCue.title}</h3>
-          <p>{funnelCue.action}</p>
-          <div className="funnel-action-meta"><span><small>Suggested owner</small><strong>{funnelCue.owner}</strong></span><span><small>Measure next</small><strong>{funnelCue.measure}</strong></span></div>
-        </div>
+        <div className="panel-head"><div><span className="eyebrow">{demoMode ? 'Sample funnel data' : hasWorkspaceData ? 'Imported funnel data' : 'No funnel data'}</span><h2>Stage conversion and drop-offs</h2></div></div>
+        {funnelData.length ? <>
+          <div className="funnel-list">{funnelData.map((stage, index) => <div className="funnel-row" key={stage.label}><div><span>{stage.label}</span><strong>{stage.value}</strong></div><div className="funnel-track"><i style={{ width: `${stage.value / Math.max(funnelData[0].value, 1) * 100}%`, background: stage.color }} /></div><small>{index ? `${stage.rate}%` : '—'}</small></div>)}</div>
+          <div className="funnel-note"><AlertTriangle size={16} /><span><strong>Largest drop:</strong> {largestDrop?.label ?? 'No stage data'}</span><em>{largestDrop?.records ?? 0} records</em></div>
+          <div className="funnel-action-card">
+            <span className="eyebrow"><Target size={13} /> Recommended response</span>
+            <h3>{funnelCue.title}</h3>
+            <p>{funnelCue.action}</p>
+            <div className="funnel-action-meta"><span><small>Suggested owner</small><strong>{funnelCue.owner}</strong></span><span><small>Measure next</small><strong>{funnelCue.measure}</strong></span></div>
+          </div>
+        </> : <div className="empty-alerts"><FileUp size={24} /><h3>No funnel evidence connected</h3><p>Connect or import leads, appointments and deals to calculate stage conversion and drop-offs.</p></div>}
       </article>
       <article className="panel funnel-analysis-card">
         <div className="panel-head"><div><span className="eyebrow">Campaign quality</span><h2>Attendance by source</h2></div></div>
@@ -623,8 +639,8 @@ function SectionPage({ section, onOpenLeak, alertData = leaks, workspace = {}, f
       </article>
     </div>}
     {section === 'Recovery' && <article className="panel full-panel"><div className="panel-head"><div><span className="eyebrow">{money.format(recoveryData.reduce((sum, item) => sum + item.value, 0))} potentially recoverable</span><h2>Open opportunities and payments</h2></div></div>{recoveryData.length ? <div className="recovery-board">{recoveryData.map((item) => <div key={recoveryItemKey(item)}><span className={`priority ${item.priority.toLowerCase()}`} /><section><strong>{item.prospect}</strong><small>{item.reason} · {item.inactive} days inactive</small><em>Owner: {item.owner}</em></section><b>{money.format(item.value)}</b><button className="resolve-button" disabled={!canAct} title={canAct ? 'Record this recovery item as resolved' : 'Viewer role is read-only'} onClick={() => canAct && onResolveRecovery?.(item)}><CheckCircle2 size={14} /><span>{canAct ? 'Record outcome' : 'Read only'}</span></button></div>)}</div> : <div className="empty-alerts"><CheckCircle2 size={24} /><h3>Nothing currently needs recovery</h3><p>No stale opportunities or at-risk payments were found in this period.</p></div>}</article>}
-    {section === 'Team' && <article className="panel full-panel"><div className="panel-head"><div><span className="eyebrow">{Object.keys(workspace).length ? 'Imported closer data' : 'Comparable lead cohorts'}</span><h2>Conversion and retention signals</h2></div></div><CloserHealthTable rows={closerData} /></article>}
-    {section === 'Payments' && <PaymentLedger workspace={workspace} />}
+    {section === 'Team' && <article className="panel full-panel"><div className="panel-head"><div><span className="eyebrow">{demoMode ? 'Sample closer data' : hasWorkspaceData ? 'Imported closer data' : 'No closer data'}</span><h2>Conversion and retention signals</h2></div></div><CloserHealthTable rows={closerData} /></article>}
+    {section === 'Payments' && <PaymentLedger workspace={workspace} demoMode={demoMode} />}
     {section === 'Data health' && <div className="health-grid">{healthData.map((source) => <article className="panel" key={source.source}>{source.status === 'Healthy' ? <CheckCircle2 size={20} className="healthy-icon" /> : <AlertTriangle size={20} className="review-icon" />}<div><span className="eyebrow">{source.status === 'Healthy' ? 'Detection ready' : 'Evidence gap'}</span><h2>{source.source}</h2><p>{source.detail}</p><small>{source.records}</small></div></article>)}</div>}
     {section === 'Settings' && <article className="panel settings-panel"><div><span className="eyebrow">Detection confidence</span><h2>Revenue maturity window</h2><p>Wait 14 days before LeakLine treats retained-revenue results as mature.</p></div><button>14 days <ChevronDown size={14} /></button><div><span className="eyebrow">Leak threshold</span><h2>Minimum sample size</h2><p>Only detect a closer-performance gap after 10 qualified calls.</p></div><button>10 calls <ChevronDown size={14} /></button></article>}
   </section>
@@ -637,7 +653,7 @@ function initials(value: string) {
 
 type AdminUser = AuthUser & { createdAt: string; lastLoginAt?: string; createdBy?: string; disabledAt?: string }
 type AdminInvite = { id: string; email: string; role: Exclude<AuthRole, 'owner'>; workspaceIds: string[]; workspaces: AuthWorkspace[]; status: 'pending' | 'accepted' | 'revoked' | 'expired'; createdAt: string; expiresAt: string; acceptedAt?: string; revokedAt?: string; token?: string }
-type MarketingLead = { id: string; name: string; email: string; phone?: string; company: string; role?: string; website?: string; monthlyBookedCalls?: string; offerPrice?: string; crm?: string; suspectedLeak?: string; notes?: string; status: 'new' | 'qualified'; createdAt: string; qualifiedAt?: string }
+type MarketingLead = { id: string; name: string; email: string; phone?: string; company: string; role?: string; website?: string; monthlyBookedCalls?: string; offerPrice?: string; monthlyOverdueVolume?: string; monthlyFailedPayments?: string; paymentProvider?: string; crm?: string; suspectedLeak?: string; currentRecoveryProcess?: string; notes?: string; status: 'new' | 'qualified'; createdAt: string; qualifiedAt?: string }
 type MarketingEvent = { id: string; event: 'page_view' | 'apply_click' | 'vsl_click' | 'sample_report_click' | 'client_login_click' | 'application_details_submitted' | 'application_completed'; path: string; createdAt: string; leadId?: string }
 
 async function adminRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -796,17 +812,17 @@ function AdminPage({ currentUser }: { currentUser: AuthUser }) {
             <div className="panel-head"><div><span className="eyebrow"><Target size={14} /> Landing page</span><h2>Conversion activity</h2></div><button className="ghost-button" onClick={() => void loadMarketing()}>Refresh</button></div>
             <div className="marketing-metrics">
               <div><span>Page views</span><strong>{eventTotal('page_view')}</strong></div>
-              <div><span>Audit clicks</span><strong>{eventTotal('apply_click')}</strong></div>
+              <div><span>Assessment clicks</span><strong>{eventTotal('apply_click')}</strong></div>
               <div><span>Details captured</span><strong>{eventTotal('application_details_submitted')}</strong></div>
               <div><span>Completed</span><strong>{eventTotal('application_completed')}</strong></div>
             </div>
           </article>
           <article className="panel admin-marketing-card">
-            <div className="panel-head"><div><span className="eyebrow">{marketingLeads.length} application{marketingLeads.length === 1 ? '' : 's'}</span><h2>Revenue Leak Audit leads</h2></div></div>
+            <div className="panel-head"><div><span className="eyebrow">{marketingLeads.length} application{marketingLeads.length === 1 ? '' : 's'}</span><h2>Revenue Recovery Assessment leads</h2></div></div>
             <div className="marketing-lead-list">
               {marketingLeads.length ? marketingLeads.map((lead) => <article key={lead.id}>
                 <span className={`marketing-lead-status ${lead.status}`}>{lead.status}</span>
-                <section><strong>{lead.name} · {lead.company}</strong><small>{lead.email}{lead.phone ? ` · ${lead.phone}` : ''}{lead.role ? ` · ${lead.role}` : ''}</small><em>{lead.suspectedLeak || 'Qualification not completed'}{lead.monthlyBookedCalls ? ` · ${lead.monthlyBookedCalls} booked calls/month` : ''}</em></section>
+                <section><strong>{lead.name} · {lead.company}</strong><small>{lead.email}{lead.phone ? ` · ${lead.phone}` : ''}{lead.role ? ` · ${lead.role}` : ''}</small><em>{lead.currentRecoveryProcess || lead.suspectedLeak || 'Qualification not completed'}{lead.monthlyOverdueVolume ? ` · ${lead.monthlyOverdueVolume} failed/overdue monthly` : lead.monthlyBookedCalls ? ` · ${lead.monthlyBookedCalls} booked calls/month` : ''}{lead.paymentProvider ? ` · ${lead.paymentProvider}` : ''}</em></section>
                 <time>{new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(lead.createdAt))}</time>
               </article>) : <div className="empty-alerts"><Users size={24} /><h3>No landing-page applications yet</h3><p>New audit applications will appear here as soon as their contact details are captured.</p></div>}
             </div>
@@ -817,7 +833,7 @@ function AdminPage({ currentUser }: { currentUser: AuthUser }) {
           <form className="admin-form" onSubmit={createUser}>
             <label>Name<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Client name" /></label>
             <label>Email<input required type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="client@company.com" /></label>
-            <label>Temporary password<input required type="password" minLength={10} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder="At least 10 characters" /></label>
+            <label>Temporary password<input required type="password" minLength={10} maxLength={128} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder="At least 10 characters" /></label>
             <label>Role<select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value as AuthUser['role'] })}>{allowedCreateRoles.map((role) => <option key={role} value={role}>{roleLabels[role]}</option>)}</select><small>{roleDescriptions[form.role]}</small></label>
             <label>Workspace<select value={form.workspaceId} onChange={(event) => setForm({ ...form, workspaceId: event.target.value })}>{currentUser.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.clientName}</option>)}</select></label>
             {error && <div className="auth-error">{error}</div>}
@@ -893,7 +909,7 @@ function AdminPage({ currentUser }: { currentUser: AuthUser }) {
 }
 
 export default function App({ user, onLogout }: AppProps) {
-  const [activeNav, setActiveNav] = useState('Leak feed')
+  const [activeNav, setActiveNav] = useState('Payment recovery')
   const [period, setPeriod] = useState<Period>('This month')
   const [customDateRange, setCustomDateRange] = useState<CustomDateRange | null>(null)
   const [dateRangeDraft, setDateRangeDraft] = useState<CustomDateRange>({ start: '', end: '' })
@@ -911,13 +927,15 @@ export default function App({ user, onLogout }: AppProps) {
   const searchInputRef = useRef<HTMLInputElement>(null)
   const workspaceMenuRef = useRef<HTMLDivElement>(null)
   const [leakFilter, setLeakFilter] = useState<'All' | Leak['severity']>('All')
-  const [importedWorkspace, setImportedWorkspace] = useState<ImportWorkspace>(() => readSavedWorkspace(user.workspaceId))
+  const [storedImportWorkspace, setStoredImportWorkspace] = useState<ImportWorkspace>({})
+  const [liveWorkspace, setLiveWorkspace] = useState<ImportWorkspace>({})
   const [resolvedRecovery, setResolvedRecovery] = useState<Set<string>>(() => readSavedResolvedRecovery(user.workspaceId))
   const [reviewedLeaks, setReviewedLeaks] = useState<Set<number>>(() => readSavedReviewedLeaks(user.workspaceId))
   const [integrationStatuses, setIntegrationStatuses] = useState<ProviderStatus[]>([])
   const [syncedCalls, setSyncedCalls] = useState(0)
   const [recoveryCases, setRecoveryCases] = useState<RecoveryCase[]>([])
 
+  const importedWorkspace = useMemo(() => mergeIntegrationWorkspace(storedImportWorkspace, liveWorkspace), [liveWorkspace, storedImportWorkspace])
   const hasImportedData = Object.keys(importedWorkspace).length > 0
   const isFullDemoWorkspace = user.workspaceId === fullDemoWorkspaceId && !hasImportedData
   const hasDisplayData = hasImportedData || isFullDemoWorkspace
@@ -925,7 +943,7 @@ export default function App({ user, onLogout }: AppProps) {
     ? filterImportedWorkspaceByDateRange(importedWorkspace, customDateRange.start, customDateRange.end)
     : filterImportedWorkspace(importedWorkspace, period), [customDateRange, importedWorkspace, period])
   const importedLeaks = useMemo(() => generateImportLeaks(periodWorkspace), [periodWorkspace])
-  const activeLeaks = hasImportedData ? importedLeaks : leaks
+  const activeLeaks = hasImportedData ? importedLeaks : isFullDemoWorkspace ? leaks : []
   const caseByLeakId = useMemo(() => new Map(recoveryCases.map((item) => [item.leakId, item])), [recoveryCases])
   const openLeaks = useMemo(() => activeLeaks.filter((leak) => caseByLeakId.get(leak.id)?.status !== 'resolved'), [activeLeaks, caseByLeakId])
   const recoveredThroughLeakLine = useMemo(() => recoveryCases.reduce((sum, item) => sum + item.recoveredAmount, 0), [recoveryCases])
@@ -942,6 +960,11 @@ export default function App({ user, onLogout }: AppProps) {
   )
 
   const currentMetrics = useMemo<Metric[]>(() => {
+    if (!hasDisplayData) return kpis.map((metric) => {
+      if (metric.label === 'Show rate') return { ...metric, value: '0%', change: undefined, detail: '0 of 0 bookings', calculation: 'No appointment data connected' }
+      if (metric.label === 'Revenue at risk') return { ...metric, value: '$0', change: undefined, detail: '0 open recovery cases', calculation: 'No leak evidence connected' }
+      return { ...metric, value: '$0', change: undefined, detail: 'No payment data connected', calculation: 'No payment data connected' }
+    })
     const view = periodMetrics[period]
     return kpis.map((metric) => {
       if (metric.label === 'Net retained') return { ...metric, value: view.retained, calculation: `${view.retained} retained during ${view.rangeLabel}` }
@@ -950,14 +973,14 @@ export default function App({ user, onLogout }: AppProps) {
       if (metric.label === 'Show rate') return { ...metric, value: view.showRate, detail: view.showDetail, calculation: `${view.showDetail} = ${view.showRate}` }
       return metric
     })
-  }, [period])
+  }, [hasDisplayData, period])
 
-  const displayFunnel = useMemo(() => importedFunnel(periodWorkspace), [periodWorkspace])
-  const displayRevenueTrend = useMemo(() => importedRevenueTrend(periodWorkspace, period), [periodWorkspace, period])
-  const displayClosers = useMemo(() => importedCloserHealth(periodWorkspace), [periodWorkspace])
-  const rawRecovery = useMemo(() => importedRecoveryQueue(periodWorkspace), [periodWorkspace])
+  const displayFunnel = useMemo(() => hasImportedData ? importedFunnel(periodWorkspace) : isFullDemoWorkspace ? funnel : [], [hasImportedData, isFullDemoWorkspace, periodWorkspace])
+  const displayRevenueTrend = useMemo(() => hasImportedData ? importedRevenueTrend(periodWorkspace, period) : isFullDemoWorkspace ? trendByPeriod[period] : [], [hasImportedData, isFullDemoWorkspace, period, periodWorkspace])
+  const displayClosers = useMemo(() => hasImportedData ? importedCloserHealth(periodWorkspace) : isFullDemoWorkspace ? reps : [], [hasImportedData, isFullDemoWorkspace, periodWorkspace])
+  const rawRecovery = useMemo(() => hasImportedData ? importedRecoveryQueue(periodWorkspace) : isFullDemoWorkspace ? recoveryQueue : [], [hasImportedData, isFullDemoWorkspace, periodWorkspace])
   const displayRecovery = useMemo(() => rawRecovery.filter((item) => !resolvedRecovery.has(recoveryItemKey(item))), [rawRecovery, resolvedRecovery])
-  const displayHealth = useMemo(() => importedDataHealth(importedWorkspace), [importedWorkspace])
+  const displayHealth = useMemo(() => isFullDemoWorkspace ? sourceHealth : importedDataHealth(importedWorkspace), [importedWorkspace, isFullDemoWorkspace])
   const sourceConfidence = useMemo(() => isFullDemoWorkspace ? {
     connectedSources: ['GoHighLevel', 'Stripe', 'Google Calendar', 'Fathom', 'Closer scorecard'],
     missingSources: [],
@@ -1038,9 +1061,10 @@ export default function App({ user, onLogout }: AppProps) {
   const detectedCasesKey = JSON.stringify(detectedCasesPayload)
 
   const navItems = [
+    { label: 'Payment recovery', display: 'Revenue Recovery', icon: CircleDollarSign },
     { label: 'Leak feed', display: 'Leak feed', icon: AlertTriangle, badge: openLeaks.length },
     { label: 'Leak command', display: 'Leak command', icon: Target },
-    { label: 'Recovery', display: 'Revenue recovery', icon: Target, badge: displayRecovery.length },
+    { label: 'Recovery', display: 'Pipeline follow-up', icon: Target, badge: displayRecovery.length },
   ]
   const supportingNavItems = [
     { label: 'Funnel', display: 'Funnel analysis', icon: Activity },
@@ -1100,7 +1124,7 @@ export default function App({ user, onLogout }: AppProps) {
 
   const demoSteps: { step: DemoStep; label: string; detail: string; ready: boolean }[] = [
     { step: dataEntryNav, label: 'Connect detection sources', detail: isFullDemoWorkspace ? 'Full sample CRM, calendar, payment, call and team evidence loaded' : hasImportedData ? 'Evidence loaded and ready for detection' : 'Connect, import or preview the evidence LeakLine checks', ready: hasDisplayData },
-    { step: 'Leak command', label: 'Leak command', detail: isFullDemoWorkspace ? 'Ascend Growth sample funnel analysed' : hasImportedData ? `${Object.values(importedWorkspace).reduce((sum, item) => sum + item.rows.length, 0)} records analysed` : 'Find the revenue leaks before you scale harder', ready: true },
+    { step: 'Leak command', label: 'Leak command', detail: isFullDemoWorkspace ? 'Ascend Growth sample funnel analysed' : hasImportedData ? `${Object.values(importedWorkspace).reduce((sum, item) => sum + item.rows.length, 0)} records analysed` : 'No client data analysed yet', ready: hasDisplayData },
     { step: 'Revenue at risk', label: 'Revenue at risk', detail: revenueAtRiskMetric?.value ?? 'Open risk total', ready: Boolean(revenueAtRiskMetric) },
     { step: 'Detected leak', label: 'Detected leak', detail: primaryLeak ? primaryLeak.title : 'No active leak detected', ready: Boolean(primaryLeak) },
     { step: 'Recovery case', label: 'Recovery case', detail: primaryLeak ? 'Evidence, owner, deadline and recovery actions' : 'No recovery case required', ready: Boolean(primaryLeak) },
@@ -1147,7 +1171,9 @@ export default function App({ user, onLogout }: AppProps) {
   }, [])
 
   useEffect(() => {
-    setImportedWorkspace(readSavedWorkspace(user.workspaceId))
+    let active = true
+    setStoredImportWorkspace({})
+    setLiveWorkspace({})
     setResolvedRecovery(readSavedResolvedRecovery(user.workspaceId))
     setReviewedLeaks(readSavedReviewedLeaks(user.workspaceId))
     setCustomDateRange(null)
@@ -1155,7 +1181,22 @@ export default function App({ user, onLogout }: AppProps) {
     setIntegrationStatuses([])
     setSyncedCalls(0)
     setRecoveryCases([])
-  }, [user.workspaceId])
+    const loadImports = async () => {
+      const legacyImports = manualImportsFromWorkspace(readSavedWorkspace(user.workspaceId))
+      try {
+        let workspace = await importWorkspaceRequest()
+        if (!Object.keys(workspace).length && Object.keys(legacyImports).length && userCanEditData) {
+          workspace = await importWorkspaceRequest('/api/imports', { method: 'PUT', body: JSON.stringify({ workspace: compactImportWorkspace(legacyImports) }) })
+        }
+        clearSavedWorkspace(user.workspaceId)
+        if (active) setStoredImportWorkspace(workspace)
+      } catch {
+        if (active) setStoredImportWorkspace(legacyImports)
+      }
+    }
+    void loadImports()
+    return () => { active = false }
+  }, [user.workspaceId, userCanEditData])
 
   useEffect(() => {
     let active = true
@@ -1167,12 +1208,7 @@ export default function App({ user, onLogout }: AppProps) {
         if (!active || !body.workspace) return
         setIntegrationStatuses(body.statuses ?? [])
         setSyncedCalls(body.calls?.length ?? 0)
-        setImportedWorkspace((current) => {
-          const next = mergeIntegrationWorkspace(current, body.workspace ?? {})
-          if (JSON.stringify(next) === JSON.stringify(current)) return current
-          saveWorkspace(user.workspaceId, next)
-          return next
-        })
+        setLiveWorkspace(body.workspace ?? {})
       } catch { /* CSV mode continues to work when the integration service is unavailable. */ }
     }
     void refreshLiveWorkspace()
@@ -1194,11 +1230,13 @@ export default function App({ user, onLogout }: AppProps) {
     return () => { active = false }
   }, [detectedCasesKey, hasDisplayData, user.workspaceId, userCanEditData])
 
-  const applyIntegratedWorkspace = (workspace: ImportWorkspace) => {
-    saveWorkspace(user.workspaceId, workspace)
+  const applyImportedWorkspace = async (workspace: ImportWorkspace) => {
+    const imports = manualImportsFromWorkspace(workspace, liveWorkspace)
+    const saved = await importWorkspaceRequest('/api/imports', { method: 'PUT', body: JSON.stringify({ workspace: compactImportWorkspace(imports) }) })
+    clearSavedWorkspace(user.workspaceId)
     clearResolvedRecovery(user.workspaceId)
     clearReviewedLeaks(user.workspaceId)
-    setImportedWorkspace(workspace)
+    setStoredImportWorkspace(saved)
     setResolvedRecovery(new Set())
     setReviewedLeaks(new Set())
   }
@@ -1206,6 +1244,7 @@ export default function App({ user, onLogout }: AppProps) {
   const applyIntegrationSnapshot = (snapshot: IntegrationSnapshot) => {
     setIntegrationStatuses(snapshot.statuses ?? [])
     setSyncedCalls(snapshot.calls?.length ?? 0)
+    setLiveWorkspace(snapshot.workspace ?? {})
   }
 
   const openWorkspacePage = (target: string) => {
@@ -1333,9 +1372,9 @@ export default function App({ user, onLogout }: AppProps) {
         </header>
 
         <div className="content">
-          {activeNav === dataEntryNav && userCanEditData ? <ImportPage initialWorkspace={importedWorkspace} onOpenIntegrations={() => setActiveNav('Integrations')} onSandboxSnapshot={applyIntegrationSnapshot} onApply={(workspace, _alerts, sourceMode) => { if (sourceMode === 'exports') { setIntegrationStatuses([]); setSyncedCalls(0) } applyIntegratedWorkspace(workspace); setActiveNav('Leak command') }} onClear={() => { clearSavedWorkspace(user.workspaceId); clearResolvedRecovery(user.workspaceId); clearReviewedLeaks(user.workspaceId); setImportedWorkspace({}); setResolvedRecovery(new Set()); setReviewedLeaks(new Set()); setIntegrationStatuses([]); setSyncedCalls(0) }} /> : activeNav === 'Integrations' && userCanEditData ? <IntegrationPage initialWorkspace={importedWorkspace} onWorkspace={applyIntegratedWorkspace} canManage={userCanManageIntegrations} canSync={userCanEditData} /> : activeNav === 'Calls' ? <CallsPage /> : activeNav === 'Admin' && userCanAdminister ? <AdminPage currentUser={user} /> : activeNav !== 'Leak command' ? <SectionPage section={activeNav === dataEntryNav || activeNav === 'Integrations' ? 'Data health' : activeNav} onOpenLeak={setSelectedLeak} alertData={activeLeaks} workspace={periodWorkspace} funnelData={displayFunnel} closerData={displayClosers} recoveryData={displayRecovery} healthData={displayHealth} onResolveRecovery={resolveRecovery} reviewedLeaks={reviewedLeaks} recoveryCases={recoveryCases} canAct={userCanEditData} /> : <>
+          {activeNav === 'Payment recovery' ? <PaymentRecoveryPage canAct={userCanEditData} workspaceId={user.workspaceId} /> : activeNav === dataEntryNav && userCanEditData ? <ImportPage initialWorkspace={importedWorkspace} onOpenIntegrations={() => setActiveNav('Integrations')} onSandboxSnapshot={applyIntegrationSnapshot} onApply={async (workspace, _alerts, sourceMode) => { if (sourceMode === 'exports') { setIntegrationStatuses([]); setSyncedCalls(0) } await applyImportedWorkspace(workspace); setActiveNav('Leak command') }} onClear={async () => { await importWorkspaceRequest('/api/imports', { method: 'DELETE' }); clearSavedWorkspace(user.workspaceId); clearResolvedRecovery(user.workspaceId); clearReviewedLeaks(user.workspaceId); setStoredImportWorkspace({}); setResolvedRecovery(new Set()); setReviewedLeaks(new Set()) }} /> : activeNav === 'Integrations' && userCanEditData ? <IntegrationPage onWorkspace={setLiveWorkspace} canManage={userCanManageIntegrations} canSync={userCanEditData} /> : activeNav === 'Calls' ? <CallsPage workspaceId={user.workspaceId} /> : activeNav === 'Admin' && userCanAdminister ? <AdminPage currentUser={user} /> : activeNav !== 'Leak command' ? <SectionPage section={activeNav === dataEntryNav || activeNav === 'Integrations' ? 'Data health' : activeNav} onOpenLeak={setSelectedLeak} alertData={activeLeaks} workspace={periodWorkspace} funnelData={displayFunnel} closerData={displayClosers} recoveryData={displayRecovery} healthData={displayHealth} demoMode={isFullDemoWorkspace} onResolveRecovery={resolveRecovery} reviewedLeaks={reviewedLeaks} recoveryCases={recoveryCases} canAct={userCanEditData} /> : <>
           <section className="page-heading">
-            <div><p>Leak command · {currentWorkspace.clientName}</p><h1>Detect, assign and recover leaking revenue.</h1><span>{isFullDemoWorkspace ? `${openLeaks.length} open recovery case${openLeaks.length === 1 ? '' : 's'} across the full sample funnel in ${reportingPeriodLabel}.` : hasImportedData ? `${openLeaks.length} open recovery case${openLeaks.length === 1 ? '' : 's'} across ${Object.values(periodWorkspace).reduce((sum, item) => sum + item.rows.length, 0)} records in ${reportingPeriodLabel}.` : `Turn detected funnel problems into owned recovery work and measurable outcomes.`}</span></div>
+            <div><p>Leak command · {currentWorkspace.clientName}</p><h1>Detect, assign and recover leaking revenue.</h1><span>{isFullDemoWorkspace ? `${openLeaks.length} open recovery case${openLeaks.length === 1 ? '' : 's'} across the full sample funnel in ${reportingPeriodLabel}.` : hasImportedData ? `${openLeaks.length} open recovery case${openLeaks.length === 1 ? '' : 's'} across ${Object.values(periodWorkspace).reduce((sum, item) => sum + item.rows.length, 0)} records in ${reportingPeriodLabel}.` : 'Connect or import client data before LeakLine runs leak detection and supporting analysis.'}</span></div>
             <div className="period-controls">
               <div className="period-switcher">
                 {(['7 days', 'This month', 'Quarter'] as Period[]).map((item) => <button key={item} className={!customDateRange && period === item ? 'active' : ''} onClick={() => selectPresetPeriod(item)}>{item}</button>)}
@@ -1348,14 +1387,14 @@ export default function App({ user, onLogout }: AppProps) {
             <article className="panel leak-panel">
               <div className="panel-head">
                 <div><span className="eyebrow"><Sparkles size={14} /> Detected and ranked by impact</span><h2>Priority leaks</h2></div>
-                <span className="live-pill"><i /> {isFullDemoWorkspace ? 'Sample' : hasImportedData ? 'Imported' : 'Live'}</span>
+                <span className="live-pill"><i /> {isFullDemoWorkspace ? 'Sample' : hasImportedData ? 'Imported' : 'No data'}</span>
               </div>
               <div className="filter-row">
                 {(['All', 'critical', 'warning', 'opportunity'] as const).map((filter) => (
                   <button key={filter} className={leakFilter === filter ? 'active' : ''} onClick={() => setLeakFilter(filter)}>{filter === 'All' ? 'All leaks' : filter}</button>
                 ))}
               </div>
-              {visibleLeaks.length ? <div className="leak-list">{visibleLeaks.slice(0, 4).map((leak) => <LeakRow key={leak.id} leak={leak} onOpen={setSelectedLeak} reviewed={reviewedLeaks.has(leak.id)} recoveryCase={caseByLeakId.get(leak.id)} />)}</div> : <div className="empty-alerts"><CheckCircle2 size={24} /><h3>No open recovery cases</h3><p>Every detected leak is currently resolved.</p></div>}
+              {visibleLeaks.length ? <div className="leak-list">{visibleLeaks.slice(0, 4).map((leak) => <LeakRow key={leak.id} leak={leak} onOpen={setSelectedLeak} reviewed={reviewedLeaks.has(leak.id)} recoveryCase={caseByLeakId.get(leak.id)} />)}</div> : <div className="empty-alerts"><FileUp size={24} /><h3>{hasDisplayData ? 'No open recovery cases' : 'No leak evidence connected'}</h3><p>{hasDisplayData ? 'Every detected leak is currently resolved.' : 'Connect or import client data to begin leak detection.'}</p></div>}
               <button className="text-button" onClick={() => setActiveNav('Leak feed')}>Review all detected leaks <ArrowRight size={16} /></button>
             </article>
 
@@ -1401,34 +1440,36 @@ export default function App({ user, onLogout }: AppProps) {
           <section className="analytics-grid">
             <article className="panel funnel-panel">
               <div className="panel-head"><div><span className="eyebrow">Funnel evidence</span><h2>Revenue funnel</h2></div><button className="ghost-button" onClick={() => setActiveNav('Funnel')}>View funnel analysis</button></div>
-              <div className="funnel-list">
-                {displayFunnel.map((stage, index) => (
-                  <div className="funnel-row" key={stage.label}>
-                    <div><span>{stage.label}</span><strong>{stage.value}</strong></div>
-                    <div className="funnel-track"><i style={{ width: `${stage.value / Math.max(displayFunnel[0].value, 1) * 100}%`, background: stage.color }} /></div>
-                    <small>{index === 0 ? '—' : `${stage.rate}%`}</small>
-                  </div>
-                ))}
-              </div>
-              <div className="funnel-note"><AlertTriangle size={16} /><span><strong>Largest drop:</strong> {largestFunnelDrop?.label ?? 'No stage data'}</span><em>{largestFunnelDrop?.records ?? 0} records</em></div>
-              <div className="funnel-action-card compact">
-                <span className="eyebrow"><Target size={13} /> Recommended response</span>
-                <h3>{largestFunnelAction.title}</h3>
-                <p>{largestFunnelAction.action}</p>
-                <div className="funnel-action-meta"><span><small>Suggested owner</small><strong>{largestFunnelAction.owner}</strong></span><span><small>Measure next</small><strong>{largestFunnelAction.measure}</strong></span></div>
-                <button className="secondary-button" onClick={() => setActiveNav('Funnel')}>Open funnel actions <ArrowRight size={14} /></button>
-              </div>
+              {displayFunnel.length ? <>
+                <div className="funnel-list">
+                  {displayFunnel.map((stage, index) => (
+                    <div className="funnel-row" key={stage.label}>
+                      <div><span>{stage.label}</span><strong>{stage.value}</strong></div>
+                      <div className="funnel-track"><i style={{ width: `${stage.value / Math.max(displayFunnel[0].value, 1) * 100}%`, background: stage.color }} /></div>
+                      <small>{index === 0 ? '—' : `${stage.rate}%`}</small>
+                    </div>
+                  ))}
+                </div>
+                <div className="funnel-note"><AlertTriangle size={16} /><span><strong>Largest drop:</strong> {largestFunnelDrop?.label ?? 'No stage data'}</span><em>{largestFunnelDrop?.records ?? 0} records</em></div>
+                <div className="funnel-action-card compact">
+                  <span className="eyebrow"><Target size={13} /> Recommended response</span>
+                  <h3>{largestFunnelAction.title}</h3>
+                  <p>{largestFunnelAction.action}</p>
+                  <div className="funnel-action-meta"><span><small>Suggested owner</small><strong>{largestFunnelAction.owner}</strong></span><span><small>Measure next</small><strong>{largestFunnelAction.measure}</strong></span></div>
+                  <button className="secondary-button" onClick={() => setActiveNav('Funnel')}>Open funnel actions <ArrowRight size={14} /></button>
+                </div>
+              </> : <div className="empty-alerts"><FileUp size={24} /><h3>No funnel evidence connected</h3><p>Connect or import leads, appointments and deals to calculate conversion and drop-offs.</p></div>}
             </article>
 
             <article className="panel trend-panel">
-              <div className="panel-head"><div><span className="eyebrow">{hasImportedData ? 'Payment evidence' : periodMetrics[period].rangeLabel}</span><div className="chart-title"><h2>Revenue exposure</h2><button aria-label="Explain revenue exposure" onClick={() => setShowChartInfo((open) => !open)}><Info size={14} /></button>{showChartInfo && <div className="chart-info-popover"><strong>Three revenue states</strong><span>Retained revenue remains after confirmed losses. Revenue at risk is linked to open recovery cases and may still be recovered. Confirmed lost revenue includes completed refunds, lost chargebacks and formal write-offs.</span></div>}</div></div><div className="legend"><span><i className="retained" />Retained</span><span><i className="leaked" />At risk</span><span><i className="lost" />Confirmed lost</span></div></div>
-              <TrendChart data={displayRevenueTrend} />
+              <div className="panel-head"><div><span className="eyebrow">{hasImportedData ? 'Payment evidence' : isFullDemoWorkspace ? periodMetrics[period].rangeLabel : 'No payment evidence'}</span><div className="chart-title"><h2>Revenue exposure</h2><button aria-label="Explain revenue exposure" onClick={() => setShowChartInfo((open) => !open)}><Info size={14} /></button>{showChartInfo && <div className="chart-info-popover"><strong>Three revenue states</strong><span>Retained revenue remains after confirmed losses. Revenue at risk is linked to open recovery cases and may still be recovered. Confirmed lost revenue includes completed refunds, lost chargebacks and formal write-offs.</span></div>}</div></div><div className="legend"><span><i className="retained" />Retained</span><span><i className="leaked" />At risk</span><span><i className="lost" />Confirmed lost</span></div></div>
+              {displayRevenueTrend.length ? <TrendChart data={displayRevenueTrend} /> : <div className="empty-alerts"><FileUp size={24} /><h3>No revenue movement available</h3><p>Connect or import payments before LeakLine plots retained, at-risk and lost revenue.</p></div>}
             </article>
           </section>
 
           <section className="bottom-grid">
             <article className="panel team-panel">
-              <div className="panel-head"><div><span className="eyebrow">Closer analysis · {hasImportedData ? 'Imported cohort' : 'Comparable cohort'}</span><h2>Conversion and retention signals</h2></div><button className="ghost-button" onClick={() => setActiveNav('Team')}>Review closer signals</button></div>
+              <div className="panel-head"><div><span className="eyebrow">Closer analysis · {hasImportedData ? 'Imported cohort' : isFullDemoWorkspace ? 'Sample cohort' : 'No data'}</span><h2>Conversion and retention signals</h2></div><button className="ghost-button" onClick={() => setActiveNav('Team')}>Review closer signals</button></div>
               <CloserHealthTable rows={displayClosers} />
             </article>
 
@@ -1473,17 +1514,17 @@ export default function App({ user, onLogout }: AppProps) {
           <section className="pilot-offer-grid" aria-label="Pilot offer">
             <article className="panel pilot-offer-card">
               <span className="eyebrow"><CircleDollarSign size={14} /> Manual pilot path</span>
-              <h2>Start with a $1,500 Revenue Leak Audit.</h2>
-              <p>Send, export, or connect leads, calls, deals, payments, refunds and team performance data. LeakLine maps where revenue is leaking before the business adds more volume.</p>
+              <h2>Start with a free Revenue Recovery Assessment.</h2>
+              <p>Review 30–90 days of failed and overdue instalments, establish the current recovery baseline and confirm whether there is enough eligible balance for a pilot.</p>
               <div className="offer-price-row">
-                <span><strong>$1,500</strong><small>Revenue Leak Audit</small></span>
-                <span><strong>$3,000 + $1,500/mo</strong><small>90-day monitoring pilot</small></span>
+                <span><strong>Free</strong><small>Recovery assessment</small></span>
+                <span><strong>$499/month</strong><small>60-day assisted founding pilot</small></span>
               </div>
             </article>
             <article className="panel pilot-offer-card">
               <span className="eyebrow"><ShieldCheck size={14} /> Recovery report outcome</span>
-              <h2>Leave with a 7-day recovery plan.</h2>
-              <p>The audit packages each leak with evidence, estimated impact, owner and next action so a manager knows what to recover first.</p>
+              <h2>Pay only when recovery work begins.</h2>
+              <p>Selected founding partners receive waived setup, one payment provider, one CRM, approved outreach assistance and a short weekly review.</p>
               <a className="report-link" href="https://drive.google.com/file/d/1cop2kFbIf-rRVoyBXid71nRA4j-CvuTL/view?usp=drivesdk" target="_blank" rel="noreferrer">View sample report <ArrowRight size={14} /></a>
             </article>
           </section>
