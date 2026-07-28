@@ -43,7 +43,7 @@ export const defaultPilotValidation = (): PilotValidationRecord => ({
   notes: '',
 })
 
-const emptyWorkspaceState = (businessName = 'Client business'): WorkspaceIntegrationState => ({ credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, imports: {}, calls: [], oauthStates: {}, recoveryCases: [], paymentRecoveryCases: [], recoveryPolicy: defaultRecoveryPolicy(businessName), pilotValidation: defaultPilotValidation() })
+const emptyWorkspaceState = (businessName = 'Client business'): WorkspaceIntegrationState => ({ credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, imports: {}, calls: [], oauthStates: {}, recoveryCases: [], paymentRecoveryCases: [], recoveryPolicy: defaultRecoveryPolicy(businessName), pilotValidation: defaultPilotValidation(), renewalClients: [], clickUpRenewalImport: undefined, kpiSnapshots: [] })
 
 const emptyState = (): StoreState => ({ workspaces: [], credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, calls: [], oauthStates: {}, users: [], sessions: [], invites: [], leadApplications: [], marketingEvents: [] })
 
@@ -66,6 +66,12 @@ function normaliseRole(role: unknown, index: number): StoreState['users'][number
   return index === 0 ? 'owner' : 'manager'
 }
 
+function normaliseRenewalStatus(status: unknown): WorkspaceIntegrationState['renewalClients'][number]['renewalStatus'] {
+  if (status === 'nurturing') return 'conversation_needed'
+  if (status === 'renewal_opportunity' || status === 'conversation_needed' || status === 'call_booked' || status === 'decision_pending' || status === 'renewed' || status === 'declined') return status
+  return 'not_started'
+}
+
 function workspaceFromLegacy(input: Partial<StoreState>): WorkspaceRecord {
   return {
     id: defaultWorkspaceId,
@@ -83,6 +89,9 @@ function workspaceFromLegacy(input: Partial<StoreState>): WorkspaceRecord {
     paymentRecoveryCases: [],
     recoveryPolicy: defaultRecoveryPolicy('Ascend Growth Partners'),
     pilotValidation: defaultPilotValidation(),
+    renewalClients: [],
+    clickUpRenewalImport: undefined,
+    kpiSnapshots: [],
   }
 }
 
@@ -112,6 +121,9 @@ function normaliseState(input: Partial<StoreState>): StoreState {
     })),
     recoveryPolicy: normaliseRecoveryPolicy(workspace.recoveryPolicy, workspace.clientName || workspace.name),
     pilotValidation: { ...defaultPilotValidation(), ...(workspace.pilotValidation ?? {}) },
+    renewalClients: (workspace.renewalClients ?? []).map((client) => ({ ...client, renewalStatus: normaliseRenewalStatus(client.renewalStatus) })),
+    clickUpRenewalImport: workspace.clickUpRenewalImport,
+    kpiSnapshots: workspace.kpiSnapshots ?? [],
   }))
   const fallbackWorkspaceId = state.workspaces[0]?.id ?? defaultWorkspaceId
   state.users = (state.users ?? []).map((user, index) => ({

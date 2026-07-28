@@ -171,6 +171,163 @@ describe.sequential('server hardening', () => {
     } finally { await rm(directory, { recursive: true, force: true }) }
   })
 
+  it('isolates renewal clients by workspace and keeps viewers read-only', async () => {
+    process.env.NODE_ENV = 'test'
+    process.env.LEAKLINE_AUTH_ENABLED = 'true'
+    process.env.LEAKLINE_INVITE_CODE = 'pilot-secret'
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-renewal-workspaces-'))
+    try {
+      const app = createApp(new EncryptedStore(directory))
+      const owner = request.agent(app)
+      const signedUp = await owner.post('/api/auth/signup').send({ name: 'Andrea', email: 'owner@example.com', password: 'secure-pass-123', inviteCode: 'pilot-secret' }).expect(201)
+      const firstWorkspaceId = signedUp.body.user.workspaceId as string
+      const launch = await owner.post('/api/workspaces').send({ name: 'Launch Webinars', clientName: 'Launch Webinars' }).expect(201)
+      await owner.post('/api/workspaces/active').send({ workspaceId: launch.body.workspaceId }).expect(200)
+
+      const payload = {
+        name: 'Pilot Client',
+        email: 'client@example.com',
+        owner: 'Yonas',
+        enrolledAt: '2026-07-01',
+        firstWebinarAt: '2026-07-10',
+        lastWebinarAt: '2026-07-24',
+        webinarsHosted: 2,
+        feedbackScore: 4,
+        feedbackNote: 'Positive about the webinar format.',
+        renewalStatus: 'not_started',
+        expectedRenewalValue: 8000,
+        renewalCashCollected: 0,
+      }
+      await owner.post('/api/renewal-clients').send({ ...payload, firstWebinarAt: undefined }).expect(400)
+      const created = await owner.post('/api/renewal-clients').send(payload).expect(201)
+      expect((await owner.get('/api/renewal-clients').expect(200)).body.clients).toHaveLength(1)
+      await owner.patch(`/api/renewal-clients/${created.body.client.id}`).send({ lastWebinarAt: '2026-07-01' }).expect(400)
+      const feedbackCleared = await owner.patch(`/api/renewal-clients/${created.body.client.id}`).send({ feedbackScore: null }).expect(200)
+      expect(feedbackCleared.body.client.feedbackScore).toBeUndefined()
+
+      await owner.post('/api/admin/users').send({ name: 'Launch Viewer', email: 'viewer@example.com', password: 'viewer-pass-123', role: 'viewer', workspaceIds: [launch.body.workspaceId] }).expect(201)
+      const viewer = request.agent(app)
+      await viewer.post('/api/auth/login').send({ email: 'viewer@example.com', password: 'viewer-pass-123' }).expect(200)
+      expect((await viewer.get('/api/renewal-clients').expect(200)).body.clients[0].name).toBe('Pilot Client')
+      await viewer.patch(`/api/renewal-clients/${created.body.client.id}`).send({ feedbackScore: 5 }).expect(403)
+      await viewer.delete(`/api/renewal-clients/${created.body.client.id}`).expect(403)
+
+      await owner.post('/api/workspaces/active').send({ workspaceId: firstWorkspaceId }).expect(200)
+      expect((await owner.get('/api/renewal-clients').expect(200)).body.clients).toEqual([])
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  })
+
+  it('lets managers safely upsert ClickUp renewal exports without overwriting manual renewal work', async () => {
+    process.env.NODE_ENV = 'test'
+    process.env.LEAKLINE_AUTH_ENABLED = 'true'
+    process.env.LEAKLINE_INVITE_CODE = 'pilot-secret'
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-clickup-renewal-import-'))
+    try {
+      const app = createApp(new EncryptedStore(directory))
+      const owner = request.agent(app)
+      const signedUp = await owner.post('/api/auth/signup').send({ name: 'Andrea', email: 'owner@example.com', password: 'secure-pass-123', inviteCode: 'pilot-secret' }).expect(201)
+      const firstWorkspaceId = signedUp.body.user.workspaceId as string
+      const launch = await owner.post('/api/workspaces').send({ name: 'Launch Webinars', clientName: 'Launch Webinars' }).expect(201)
+      await owner.post('/api/workspaces/active').send({ workspaceId: launch.body.workspaceId }).expect(200)
+      await owner.post('/api/renewal-clients').send({
+        name: 'Existing Client',
+        email: 'existing@example.com',
+        owner: 'Yonas',
+        firstWebinarAt: '2026-07-01',
+        lastWebinarAt: '2026-07-01',
+        webinarsHosted: 1,
+        feedbackScore: 5,
+        feedbackNote: 'Strong results.',
+        renewalStatus: 'conversation_needed',
+        expectedRenewalValue: 5000,
+        renewalCashCollected: 0,
+        nextAction: 'Book the renewal call.',
+      }).expect(201)
+      await owner.post('/api/admin/users').send({ name: 'Yonas', email: 'yonas@example.com', password: 'manager-pass-123', role: 'manager', workspaceIds: [launch.body.workspaceId] }).expect(201)
+      await owner.post('/api/admin/users').send({ name: 'Launch Viewer', email: 'viewer@example.com', password: 'viewer-pass-123', role: 'viewer', workspaceIds: [launch.body.workspaceId] }).expect(201)
+
+      const manager = request.agent(app)
+      await manager.post('/api/auth/login').send({ email: 'yonas@example.com', password: 'manager-pass-123' }).expect(200)
+      const payload = {
+        fileName: 'Client Manager.csv',
+        sourceRows: 2,
+        rows: [
+          { clickUpTaskId: 'task-existing', name: 'Existing Client Updated', email: 'existing@example.com', firstWebinarAt: '2026-07-01', lastWebinarAt: '2026-07-20', nextWebinarAt: '2026-08-05', webinarsHosted: 2, clickUpStatus: 'Active' },
+          { clickUpTaskId: 'task-new', name: 'New Client', email: 'new@example.com', firstWebinarAt: '2026-07-10', lastWebinarAt: '2026-07-10', webinarsHosted: 1 },
+        ],
+      }
+      const imported = await manager.post('/api/renewal-clients/import-clickup').send(payload).expect(200)
+      expect(imported.body.result).toEqual({ created: 1, updated: 1, unchanged: 0 })
+      const existing = imported.body.clients.find((client: { clickUpTaskId: string }) => client.clickUpTaskId === 'task-existing')
+      const newClient = imported.body.clients.find((client: { clickUpTaskId: string }) => client.clickUpTaskId === 'task-new')
+      expect(existing).toMatchObject({
+        name: 'Existing Client Updated',
+        owner: 'Yonas',
+        webinarsHosted: 2,
+        nextWebinarAt: '2026-08-05',
+        feedbackScore: 5,
+        feedbackNote: 'Strong results.',
+        renewalStatus: 'conversation_needed',
+        expectedRenewalValue: 5000,
+        nextAction: 'Book the renewal call.',
+      })
+      expect(newClient).toMatchObject({ owner: 'Yonas', expectedRenewalValue: 8000 })
+      expect(imported.body.clickUpImport).toMatchObject({ importedBy: 'Yonas', acceptedRows: 2 })
+
+      const replayed = await manager.post('/api/renewal-clients/import-clickup').send(payload).expect(200)
+      expect(replayed.body.result).toEqual({ created: 0, updated: 0, unchanged: 2 })
+      expect(replayed.body.clients).toHaveLength(2)
+
+      const viewer = request.agent(app)
+      await viewer.post('/api/auth/login').send({ email: 'viewer@example.com', password: 'viewer-pass-123' }).expect(200)
+      await viewer.post('/api/renewal-clients/import-clickup').send(payload).expect(403)
+
+      await owner.post('/api/workspaces/active').send({ workspaceId: firstWorkspaceId }).expect(200)
+      expect((await owner.get('/api/renewal-clients').expect(200)).body.clients).toEqual([])
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  })
+
+  it('isolates KPI snapshots by workspace, validates periods and keeps viewers read-only', async () => {
+    process.env.NODE_ENV = 'test'
+    process.env.LEAKLINE_AUTH_ENABLED = 'true'
+    process.env.LEAKLINE_INVITE_CODE = 'pilot-secret'
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-kpi-workspaces-'))
+    try {
+      const app = createApp(new EncryptedStore(directory))
+      const owner = request.agent(app)
+      const signedUp = await owner.post('/api/auth/signup').send({ name: 'Andrea', email: 'owner@example.com', password: 'secure-pass-123', inviteCode: 'pilot-secret' }).expect(201)
+      const firstWorkspaceId = signedUp.body.user.workspaceId as string
+      const launch = await owner.post('/api/workspaces').send({ name: 'Launch Webinars', clientName: 'Launch Webinars' }).expect(201)
+      await owner.post('/api/workspaces/active').send({ workspaceId: launch.body.workspaceId }).expect(200)
+
+      const payload = {
+        periodStart: '2026-07-01',
+        periodEnd: '2026-07-07',
+        bookedCalls: 20,
+        callsTaken: 15,
+        deals: 5,
+        refunds: 1,
+        totalRevenue: 25_000,
+        cashCollected: 15_000,
+        notes: 'Weekly sales totals.',
+      }
+      await owner.post('/api/kpi-snapshots').send({ ...payload, periodStart: '2026-07-08' }).expect(400)
+      const created = await owner.post('/api/kpi-snapshots').send(payload).expect(201)
+      expect(created.body.snapshot.source).toBe('manual')
+      expect((await owner.get('/api/kpi-snapshots').expect(200)).body.snapshots).toHaveLength(1)
+
+      await owner.post('/api/admin/users').send({ name: 'Launch Viewer', email: 'viewer@example.com', password: 'viewer-pass-123', role: 'viewer', workspaceIds: [launch.body.workspaceId] }).expect(201)
+      const viewer = request.agent(app)
+      await viewer.post('/api/auth/login').send({ email: 'viewer@example.com', password: 'viewer-pass-123' }).expect(200)
+      expect((await viewer.get('/api/kpi-snapshots').expect(200)).body.snapshots[0].cashCollected).toBe(15_000)
+      await viewer.patch(`/api/kpi-snapshots/${created.body.snapshot.id}`).send({ cashCollected: 16_000 }).expect(403)
+      await viewer.delete(`/api/kpi-snapshots/${created.body.snapshot.id}`).expect(403)
+
+      await owner.post('/api/workspaces/active').send({ workspaceId: firstWorkspaceId }).expect(200)
+      expect((await owner.get('/api/kpi-snapshots').expect(200)).body.snapshots).toEqual([])
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  })
+
   it('serialises concurrent encrypted-store updates', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'leakline-recovery-store-queue-'))
     try {

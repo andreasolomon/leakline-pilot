@@ -6,6 +6,7 @@ import {
   ArrowDownRight,
   ArrowRight,
   ArrowUpRight,
+  BarChart3,
   Bell,
   CalendarDays,
   CheckCircle2,
@@ -34,6 +35,9 @@ import type { AuthRole, AuthUser, AuthWorkspace } from './AuthGate'
 import RecoveryCaseDrawer from './RecoveryCaseDrawer'
 import { recoveryCaseRequest, recoveryStatusLabels, type RecoveryCase, type RecoveryCaseUpdate } from './recoveryCases'
 import PaymentRecoveryPage from './PaymentRecoveryPage'
+import RenewalCommandPage from './RenewalCommandPage'
+import KpiTrackingPage from './KpiTrackingPage'
+import { isRenewalPilotClient } from './workspaceMode'
 
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 const workspaceStorageKey = 'leakline-v1-workspace'
@@ -125,6 +129,10 @@ const adminAssignableRoles: AuthRole[] = ['manager', 'viewer']
 const canAdminister = (user: AuthUser) => user.role === 'owner' || user.role === 'admin'
 const canManageIntegrations = (user: AuthUser) => user.role === 'owner' || user.role === 'admin'
 const canEditWorkspaceData = (user: AuthUser) => user.role !== 'viewer'
+const isRenewalPilotWorkspace = (user: AuthUser) => {
+  const workspace = user.workspaces.find((item) => item.id === user.workspaceId)
+  return workspace ? isRenewalPilotClient(workspace.name, workspace.clientName) : false
+}
 
 const textValue = (value: unknown) => String(value ?? '').trim().toLowerCase()
 const numberValue = (value: unknown) => typeof value === 'number' ? value : 0
@@ -909,7 +917,7 @@ function AdminPage({ currentUser }: { currentUser: AuthUser }) {
 }
 
 export default function App({ user, onLogout }: AppProps) {
-  const [activeNav, setActiveNav] = useState('Payment recovery')
+  const [activeNav, setActiveNav] = useState(() => isRenewalPilotWorkspace(user) ? 'Renewal command' : 'Payment recovery')
   const [period, setPeriod] = useState<Period>('This month')
   const [customDateRange, setCustomDateRange] = useState<CustomDateRange | null>(null)
   const [dateRangeDraft, setDateRangeDraft] = useState<CustomDateRange>({ start: '', end: '' })
@@ -989,6 +997,7 @@ export default function App({ user, onLogout }: AppProps) {
     note: 'Full sample evidence is available across the CRM, calendar, payments, calls and closer scorecard.',
   } : dataSourceConfidence(importedWorkspace, integrationStatuses, syncedCalls), [importedWorkspace, integrationStatuses, isFullDemoWorkspace, syncedCalls])
   const currentWorkspace = user.workspaces.find((workspace) => workspace.id === user.workspaceId) ?? user.workspaces[0] ?? { id: user.workspaceId, name: 'Workspace', clientName: 'Client workspace', role: user.role, recordCount: 0 } satisfies AuthWorkspace
+  const isRenewalPilot = isRenewalPilotWorkspace(user)
   const userCanAdminister = canAdminister(user)
   const userCanManageIntegrations = canManageIntegrations(user)
   const userCanEditData = canEditWorkspaceData(user)
@@ -1061,7 +1070,10 @@ export default function App({ user, onLogout }: AppProps) {
   const detectedCasesKey = JSON.stringify(detectedCasesPayload)
 
   const navItems = [
-    { label: 'Payment recovery', display: 'Revenue Recovery', icon: CircleDollarSign },
+    isRenewalPilot
+      ? { label: 'Renewal command', display: 'Renewal Command', icon: CalendarDays }
+      : { label: 'Payment recovery', display: 'Revenue Recovery', icon: CircleDollarSign },
+    ...(isRenewalPilot ? [{ label: 'KPI tracking', display: 'KPI Tracking', icon: BarChart3 }] : []),
     { label: 'Leak feed', display: 'Leak feed', icon: AlertTriangle, badge: openLeaks.length },
     { label: 'Leak command', display: 'Leak command', icon: Target },
     { label: 'Recovery', display: 'Pipeline follow-up', icon: Target, badge: displayRecovery.length },
@@ -1349,7 +1361,7 @@ export default function App({ user, onLogout }: AppProps) {
       <main>
         <header>
           <button className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={21} /></button>
-          <div className={`search ${searchOpen ? 'open' : ''}`} onClick={() => { setSearchOpen(true); setNotificationsOpen(false); setPeriodMenuOpen(false) }}>
+          {activeNav === 'Renewal command' ? <div className="renewal-header-context"><CalendarDays size={18} /><span><strong>Recurring revenue workspace</strong><small>Program activity, feedback and renewal actions</small></span></div> : activeNav === 'KPI tracking' ? <div className="renewal-header-context"><BarChart3 size={18} /><span><strong>Sales performance workspace</strong><small>Core totals, conversion and cash efficiency</small></span></div> : <div className={`search ${searchOpen ? 'open' : ''}`} onClick={() => { setSearchOpen(true); setNotificationsOpen(false); setPeriodMenuOpen(false) }}>
             <Search size={17} />
             <input ref={searchInputRef} aria-label="Search leaks, recovery cases or records" placeholder="Search leaks, cases or records" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onFocus={() => setSearchOpen(true)} />
             <kbd>⌘ K</kbd>
@@ -1357,8 +1369,8 @@ export default function App({ user, onLogout }: AppProps) {
               <span className="popover-label">{searchQuery ? `${searchResults.length} results` : 'Open leaks'}</span>
               {searchResults.length ? searchResults.map((item) => <button key={item.key} onClick={() => openSearchItem(item)}><Search size={14} /><span><strong>{item.label}</strong><small>{item.meta}</small></span><ArrowRight size={14} /></button>) : <div className="popover-empty">No matching records</div>}
             </div>}
-          </div>
-          <div className="header-control">
+          </div>}
+          {activeNav !== 'Renewal command' && activeNav !== 'KPI tracking' && <><div className="header-control">
             <button className="icon-button" aria-label="Leak alerts" onClick={() => { setNotificationsOpen((open) => !open); setSearchOpen(false); setPeriodMenuOpen(false) }}><Bell size={19} />{unreadAlerts.length > 0 && <i />}</button>
             {notificationsOpen && <div className="header-popover notification-popover">
               <div className="popover-head"><span><strong>Leak alerts</strong><small>{unreadAlerts.length} need acknowledgement</small></span>{unreadAlerts.length > 0 && userCanEditData && <button onClick={markAllAlertsReviewed}>Acknowledge all</button>}</div>
@@ -1368,11 +1380,11 @@ export default function App({ user, onLogout }: AppProps) {
           <div className="header-control">
             <button className="period-button" aria-label="Select leak detection window" onClick={() => { setPeriodMenuOpen((open) => !open); setSearchOpen(false); setNotificationsOpen(false) }}><CalendarDays size={17} /><span>{reportingPeriodLabel}</span><ChevronDown size={15} /></button>
             {periodMenuOpen && <div className="header-popover period-popover"><span className="popover-label">Detection window</span>{(['7 days', 'This month', 'Quarter'] as Period[]).map((item) => <button key={item} className={!customDateRange && period === item ? 'active' : ''} onClick={() => selectPresetPeriod(item)}><span>{item}</span>{!customDateRange && period === item && <CheckCircle2 size={15} />}</button>)}<button className={customDateRange ? 'active custom-period-option' : 'custom-period-option'} onClick={openCustomDateRange}><CalendarDays size={15} /><span><strong>Custom detection window</strong><small>{customDateRange ? reportingPeriodLabel : 'Choose exact start and end dates'}</small></span>{customDateRange && <CheckCircle2 size={15} />}</button></div>}
-          </div>
+          </div></>}
         </header>
 
         <div className="content">
-          {activeNav === 'Payment recovery' ? <PaymentRecoveryPage canAct={userCanEditData} workspaceId={user.workspaceId} /> : activeNav === dataEntryNav && userCanEditData ? <ImportPage initialWorkspace={importedWorkspace} onOpenIntegrations={() => setActiveNav('Integrations')} onSandboxSnapshot={applyIntegrationSnapshot} onApply={async (workspace, _alerts, sourceMode) => { if (sourceMode === 'exports') { setIntegrationStatuses([]); setSyncedCalls(0) } await applyImportedWorkspace(workspace); setActiveNav('Leak command') }} onClear={async () => { await importWorkspaceRequest('/api/imports', { method: 'DELETE' }); clearSavedWorkspace(user.workspaceId); clearResolvedRecovery(user.workspaceId); clearReviewedLeaks(user.workspaceId); setStoredImportWorkspace({}); setResolvedRecovery(new Set()); setReviewedLeaks(new Set()) }} /> : activeNav === 'Integrations' && userCanEditData ? <IntegrationPage onWorkspace={setLiveWorkspace} canManage={userCanManageIntegrations} canSync={userCanEditData} /> : activeNav === 'Calls' ? <CallsPage workspaceId={user.workspaceId} /> : activeNav === 'Admin' && userCanAdminister ? <AdminPage currentUser={user} /> : activeNav !== 'Leak command' ? <SectionPage section={activeNav === dataEntryNav || activeNav === 'Integrations' ? 'Data health' : activeNav} onOpenLeak={setSelectedLeak} alertData={activeLeaks} workspace={periodWorkspace} funnelData={displayFunnel} closerData={displayClosers} recoveryData={displayRecovery} healthData={displayHealth} demoMode={isFullDemoWorkspace} onResolveRecovery={resolveRecovery} reviewedLeaks={reviewedLeaks} recoveryCases={recoveryCases} canAct={userCanEditData} /> : <>
+          {activeNav === 'Renewal command' ? <RenewalCommandPage canAct={userCanEditData} workspaceId={user.workspaceId} /> : activeNav === 'KPI tracking' ? <KpiTrackingPage canAct={userCanEditData} workspaceId={user.workspaceId} /> : activeNav === 'Payment recovery' ? <PaymentRecoveryPage canAct={userCanEditData} workspaceId={user.workspaceId} /> : activeNav === dataEntryNav && userCanEditData ? <ImportPage initialWorkspace={importedWorkspace} onOpenIntegrations={() => setActiveNav('Integrations')} onSandboxSnapshot={applyIntegrationSnapshot} onApply={async (workspace, _alerts, sourceMode) => { if (sourceMode === 'exports') { setIntegrationStatuses([]); setSyncedCalls(0) } await applyImportedWorkspace(workspace); setActiveNav('Leak command') }} onClear={async () => { await importWorkspaceRequest('/api/imports', { method: 'DELETE' }); clearSavedWorkspace(user.workspaceId); clearResolvedRecovery(user.workspaceId); clearReviewedLeaks(user.workspaceId); setStoredImportWorkspace({}); setResolvedRecovery(new Set()); setReviewedLeaks(new Set()) }} /> : activeNav === 'Integrations' && userCanEditData ? <IntegrationPage onWorkspace={setLiveWorkspace} canManage={userCanManageIntegrations} canSync={userCanEditData} /> : activeNav === 'Calls' ? <CallsPage workspaceId={user.workspaceId} /> : activeNav === 'Admin' && userCanAdminister ? <AdminPage currentUser={user} /> : activeNav !== 'Leak command' ? <SectionPage section={activeNav === dataEntryNav || activeNav === 'Integrations' ? 'Data health' : activeNav} onOpenLeak={setSelectedLeak} alertData={activeLeaks} workspace={periodWorkspace} funnelData={displayFunnel} closerData={displayClosers} recoveryData={displayRecovery} healthData={displayHealth} demoMode={isFullDemoWorkspace} onResolveRecovery={resolveRecovery} reviewedLeaks={reviewedLeaks} recoveryCases={recoveryCases} canAct={userCanEditData} /> : <>
           <section className="page-heading">
             <div><p>Leak command · {currentWorkspace.clientName}</p><h1>Detect, assign and recover leaking revenue.</h1><span>{isFullDemoWorkspace ? `${openLeaks.length} open recovery case${openLeaks.length === 1 ? '' : 's'} across the full sample funnel in ${reportingPeriodLabel}.` : hasImportedData ? `${openLeaks.length} open recovery case${openLeaks.length === 1 ? '' : 's'} across ${Object.values(periodWorkspace).reduce((sum, item) => sum + item.rows.length, 0)} records in ${reportingPeriodLabel}.` : 'Connect or import client data before LeakLine runs leak detection and supporting analysis.'}</span></div>
             <div className="period-controls">

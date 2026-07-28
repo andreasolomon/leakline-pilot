@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import { EncryptedStore, defaultPilotValidation, defaultRecoveryPolicy } from './store.js'
 import { IntegrationService } from './integrationService.js'
-import type { ProviderId } from './types.js'
+import type { KpiSnapshotRecord, ProviderId, RenewalClientRecord } from './types.js'
 import { safeErrorMessage } from './safety.js'
 import { AuthService, type PublicUser } from './authService.js'
 import { frontendEntryForPath } from './frontendRoutes.js'
@@ -16,6 +16,7 @@ import { reconcilePaymentRecoveryCases } from './paymentRecovery.js'
 import { createRateLimiter, requireSameOriginMutation, securityHeaders } from './requestProtection.js'
 
 const providerSchema = z.enum(['stripe', 'whop', 'fanbasis', 'highlevel', 'google-calendar', 'fathom'])
+const isValidationError = (error: unknown) => error instanceof z.ZodError || Boolean(error && typeof error === 'object' && Array.isArray((error as { issues?: unknown }).issues))
 const roleSchema = z.enum(['owner', 'admin', 'manager', 'viewer'])
 const inviteRoleSchema = z.enum(['admin', 'manager', 'viewer'])
 const newPasswordSchema = z.string().min(10).max(128)
@@ -72,6 +73,100 @@ const pilotValidationSchema = z.object({
   updatedAt: z.string().optional(),
   updatedBy: z.string().optional(),
 })
+const optionalDateSchema = z.union([z.string().date(), z.literal('')]).transform((value) => value || undefined)
+const renewalStatusSchema = z.enum(['not_started', 'renewal_opportunity', 'conversation_needed', 'call_booked', 'decision_pending', 'renewed', 'declined'])
+const renewalClientFieldsSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  email: z.union([z.string().trim().email().max(160), z.literal('')]).optional().transform((value) => value || undefined),
+  owner: z.string().trim().min(2).max(100),
+  enrolledAt: optionalDateSchema.optional(),
+  firstWebinarAt: optionalDateSchema.optional(),
+  lastWebinarAt: optionalDateSchema.optional(),
+  nextWebinarAt: optionalDateSchema.optional(),
+  webinarsHosted: z.number().int().min(0).max(10_000),
+  feedbackScore: z.union([z.number().int().min(1).max(5), z.null()]).optional().transform((value) => value ?? undefined),
+  feedbackNote: z.string().trim().max(2_000).optional(),
+  renewalCallAt: optionalDateSchema.optional(),
+  renewalStatus: renewalStatusSchema,
+  expectedRenewalValue: z.number().min(0).max(100_000_000),
+  renewalCashCollected: z.number().min(0).max(100_000_000),
+  nextAction: z.string().trim().max(500).optional(),
+}).strict()
+const validateRenewalClient = (client: z.infer<typeof renewalClientFieldsSchema>, context: z.RefinementCtx) => {
+  if (client.webinarsHosted > 0 && !client.firstWebinarAt) context.addIssue({ code: 'custom', path: ['firstWebinarAt'], message: 'Add the first webinar date when completed webinars are recorded.' })
+  if (client.firstWebinarAt && client.webinarsHosted === 0) context.addIssue({ code: 'custom', path: ['webinarsHosted'], message: 'A first webinar date requires at least one completed webinar.' })
+  if (client.lastWebinarAt && !client.firstWebinarAt) context.addIssue({ code: 'custom', path: ['firstWebinarAt'], message: 'Add the first webinar date before the latest webinar date.' })
+  if (client.firstWebinarAt && client.lastWebinarAt && client.lastWebinarAt < client.firstWebinarAt) context.addIssue({ code: 'custom', path: ['lastWebinarAt'], message: 'The latest webinar cannot be before the first webinar.' })
+}
+const renewalClientInputSchema = renewalClientFieldsSchema.superRefine(validateRenewalClient)
+const renewalClientPatchSchema = renewalClientFieldsSchema.partial().refine((value) => Object.keys(value).length > 0, 'Provide at least one field to update.')
+function renewalInputFromRecord(client: RenewalClientRecord) {
+  return {
+    name: client.name,
+    email: client.email,
+    owner: client.owner,
+    enrolledAt: client.enrolledAt,
+    firstWebinarAt: client.firstWebinarAt,
+    lastWebinarAt: client.lastWebinarAt,
+    nextWebinarAt: client.nextWebinarAt,
+    webinarsHosted: client.webinarsHosted,
+    feedbackScore: client.feedbackScore,
+    feedbackNote: client.feedbackNote,
+    renewalCallAt: client.renewalCallAt,
+    renewalStatus: client.renewalStatus,
+    expectedRenewalValue: client.expectedRenewalValue,
+    renewalCashCollected: client.renewalCashCollected,
+    nextAction: client.nextAction,
+  }
+}
+const clickUpRenewalRowSchema = z.object({
+  clickUpTaskId: z.string().trim().min(1).max(100),
+  name: z.string().trim().min(2).max(120),
+  email: z.union([z.string().trim().email().max(160), z.literal('')]).optional().transform((value) => value || undefined),
+  firstWebinarAt: optionalDateSchema.optional(),
+  lastWebinarAt: optionalDateSchema.optional(),
+  nextWebinarAt: optionalDateSchema.optional(),
+  webinarsHosted: z.number().int().min(0).max(10_000),
+  clickUpStatus: z.string().trim().max(100).optional(),
+}).strict().superRefine((row, context) => {
+  if (row.webinarsHosted > 0 && !row.firstWebinarAt) context.addIssue({ code: 'custom', path: ['firstWebinarAt'], message: 'Completed webinars require a first webinar date.' })
+  if (row.firstWebinarAt && row.webinarsHosted === 0) context.addIssue({ code: 'custom', path: ['webinarsHosted'], message: 'A first webinar date requires a completed webinar.' })
+  if (row.firstWebinarAt && row.lastWebinarAt && row.lastWebinarAt < row.firstWebinarAt) context.addIssue({ code: 'custom', path: ['lastWebinarAt'], message: 'The latest webinar cannot be before the first webinar.' })
+})
+const clickUpRenewalImportSchema = z.object({
+  fileName: z.string().trim().min(1).max(200),
+  sourceRows: z.number().int().min(1).max(5_000),
+  rows: z.array(clickUpRenewalRowSchema).min(1).max(500),
+}).strict()
+const kpiSnapshotFieldsSchema = z.object({
+  periodStart: z.string().date(),
+  periodEnd: z.string().date(),
+  bookedCalls: z.number().int().min(0).max(10_000_000),
+  callsTaken: z.number().int().min(0).max(10_000_000),
+  deals: z.number().int().min(0).max(10_000_000),
+  refunds: z.number().int().min(0).max(10_000_000),
+  totalRevenue: z.number().min(0).max(1_000_000_000),
+  cashCollected: z.number().min(0).max(1_000_000_000),
+  notes: z.string().trim().max(2_000).optional(),
+}).strict()
+const validateKpiSnapshot = (snapshot: z.infer<typeof kpiSnapshotFieldsSchema>, context: z.RefinementCtx) => {
+  if (snapshot.periodEnd < snapshot.periodStart) context.addIssue({ code: 'custom', path: ['periodEnd'], message: 'The reporting-period end cannot be before its start.' })
+}
+const kpiSnapshotInputSchema = kpiSnapshotFieldsSchema.superRefine(validateKpiSnapshot)
+const kpiSnapshotPatchSchema = kpiSnapshotFieldsSchema.partial().refine((value) => Object.keys(value).length > 0, 'Provide at least one field to update.')
+function kpiInputFromRecord(snapshot: KpiSnapshotRecord) {
+  return {
+    periodStart: snapshot.periodStart,
+    periodEnd: snapshot.periodEnd,
+    bookedCalls: snapshot.bookedCalls,
+    callsTaken: snapshot.callsTaken,
+    deals: snapshot.deals,
+    refunds: snapshot.refunds,
+    totalRevenue: snapshot.totalRevenue,
+    cashCollected: snapshot.cashCollected,
+    notes: snapshot.notes,
+  }
+}
 function dateInTimezone(date: string, timezone: string) {
   const guess = Date.parse(`${date}T09:00:00.000Z`)
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(guess)).map((part) => [part.type, part.value]))
@@ -540,6 +635,8 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
           paymentRecoveryCases: [],
           recoveryPolicy: defaultRecoveryPolicy(input.clientName.trim()),
           pilotValidation: defaultPilotValidation(),
+          renewalClients: [],
+          kpiSnapshots: [],
         })
         for (const user of state.users.filter((item) => item.role === 'owner')) {
           user.workspaceIds = Array.from(new Set([...(user.workspaceIds ?? []), workspaceId]))
@@ -592,6 +689,211 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
       response.json({ ok: true })
     } catch (error) {
       response.status(403).json({ error: safeErrorMessage(error) })
+    }
+  })
+
+  app.get('/api/renewal-clients', async (_request, response) => {
+    const state = await store.read()
+    const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+    if (!workspace) return response.status(404).json({ error: 'Workspace not found.' })
+    response.json({
+      clients: [...workspace.renewalClients].sort((left, right) => left.name.localeCompare(right.name)),
+      clickUpImport: workspace.clickUpRenewalImport,
+    })
+  })
+
+  app.post('/api/renewal-clients', async (request, response) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      const input = renewalClientInputSchema.parse(request.body)
+      const now = new Date().toISOString()
+      let client: RenewalClientRecord | undefined
+      await store.update((state) => {
+        const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+        if (!workspace) throw new Error('Workspace not found.')
+        client = { id: `renewal-${randomBytes(8).toString('hex')}`, ...input, source: 'manual', createdAt: now, updatedAt: now }
+        workspace.renewalClients.push(client)
+      })
+      response.status(201).json({ client })
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(isValidationError(error) ? 400 : /not found/i.test(message) ? 404 : 403).json({ error: message })
+    }
+  })
+
+  app.patch('/api/renewal-clients/:clientId', async (request, response) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      const input = renewalClientPatchSchema.parse(request.body)
+      let client: RenewalClientRecord | undefined
+      await store.update((state) => {
+        const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+        client = workspace?.renewalClients.find((item) => item.id === request.params.clientId)
+        if (!client) throw new Error('Renewal client not found.')
+        const completeInput = renewalClientInputSchema.parse({ ...renewalInputFromRecord(client), ...input })
+        Object.assign(client, completeInput, { updatedAt: new Date().toISOString() })
+      })
+      response.json({ client })
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(isValidationError(error) ? 400 : /not found/i.test(message) ? 404 : 403).json({ error: message })
+    }
+  })
+
+  app.delete('/api/renewal-clients/:clientId', async (request, response) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      await store.update((state) => {
+        const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+        if (!workspace) throw new Error('Workspace not found.')
+        const index = workspace.renewalClients.findIndex((item) => item.id === request.params.clientId)
+        if (index < 0) throw new Error('Renewal client not found.')
+        workspace.renewalClients.splice(index, 1)
+      })
+      response.json({ ok: true })
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(/not found/i.test(message) ? 404 : 403).json({ error: message })
+    }
+  })
+
+  app.post('/api/renewal-clients/import-clickup', async (request, response) => {
+    try {
+      const actor = response.locals.user as PublicUser
+      auth.requireDataEditor(actor)
+      const input = clickUpRenewalImportSchema.parse(request.body)
+      const now = new Date().toISOString()
+      let result = { created: 0, updated: 0, unchanged: 0 }
+      let clients: RenewalClientRecord[] = []
+      await store.update((state) => {
+        const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+        if (!workspace) throw new Error('Workspace not found.')
+        const seenTaskIds = new Set<string>()
+        const seenEmails = new Set<string>()
+        for (const row of input.rows) {
+          const emailKey = row.email?.toLowerCase()
+          if (seenTaskIds.has(row.clickUpTaskId) || emailKey && seenEmails.has(emailKey)) throw new Error('The ClickUp import contains duplicate client records.')
+          seenTaskIds.add(row.clickUpTaskId)
+          if (emailKey) seenEmails.add(emailKey)
+
+          const existing = workspace.renewalClients.find((client) => client.clickUpTaskId === row.clickUpTaskId)
+            ?? (emailKey ? workspace.renewalClients.find((client) => client.email?.toLowerCase() === emailKey) : undefined)
+          if (!existing) {
+            workspace.renewalClients.push({
+              id: `renewal-${randomBytes(8).toString('hex')}`,
+              name: row.name,
+              email: row.email,
+              owner: 'Yonas',
+              firstWebinarAt: row.firstWebinarAt,
+              lastWebinarAt: row.lastWebinarAt,
+              nextWebinarAt: row.nextWebinarAt,
+              webinarsHosted: row.webinarsHosted,
+              renewalStatus: 'not_started',
+              expectedRenewalValue: 8_000,
+              renewalCashCollected: 0,
+              source: 'clickup',
+              clickUpTaskId: row.clickUpTaskId,
+              clickUpStatus: row.clickUpStatus,
+              createdAt: now,
+              updatedAt: now,
+            })
+            result.created += 1
+            continue
+          }
+
+          const sourceFields = {
+            name: row.name,
+            email: row.email,
+            firstWebinarAt: row.firstWebinarAt,
+            lastWebinarAt: row.lastWebinarAt,
+            nextWebinarAt: row.nextWebinarAt,
+            webinarsHosted: row.webinarsHosted,
+            source: 'clickup' as const,
+            clickUpTaskId: row.clickUpTaskId,
+            clickUpStatus: row.clickUpStatus,
+          }
+          const changed = Object.entries(sourceFields).some(([key, value]) => existing[key as keyof RenewalClientRecord] !== value)
+          if (changed) {
+            Object.assign(existing, sourceFields, { updatedAt: now })
+            result.updated += 1
+          } else result.unchanged += 1
+        }
+        workspace.clickUpRenewalImport = {
+          fileName: input.fileName.split(/[\\/]/).at(-1) ?? 'ClickUp export.csv',
+          importedAt: now,
+          importedBy: actor.name,
+          sourceRows: input.sourceRows,
+          acceptedRows: input.rows.length,
+          ...result,
+        }
+        clients = [...workspace.renewalClients].sort((left, right) => left.name.localeCompare(right.name))
+      })
+      response.json({ clients, clickUpImport: { fileName: input.fileName.split(/[\\/]/).at(-1) ?? 'ClickUp export.csv', importedAt: now, importedBy: actor.name, sourceRows: input.sourceRows, acceptedRows: input.rows.length, ...result }, result })
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(isValidationError(error) ? 400 : /not found/i.test(message) ? 404 : 403).json({ error: message })
+    }
+  })
+
+  app.get('/api/kpi-snapshots', async (_request, response) => {
+    const state = await store.read()
+    const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+    if (!workspace) return response.status(404).json({ error: 'Workspace not found.' })
+    response.json({ snapshots: [...workspace.kpiSnapshots].sort((left, right) => right.periodEnd.localeCompare(left.periodEnd) || right.updatedAt.localeCompare(left.updatedAt)) })
+  })
+
+  app.post('/api/kpi-snapshots', async (request, response) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      const input = kpiSnapshotInputSchema.parse(request.body)
+      const now = new Date().toISOString()
+      let snapshot: KpiSnapshotRecord | undefined
+      await store.update((state) => {
+        const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+        if (!workspace) throw new Error('Workspace not found.')
+        snapshot = { id: `kpi-${randomBytes(8).toString('hex')}`, ...input, source: 'manual', createdAt: now, updatedAt: now }
+        workspace.kpiSnapshots.push(snapshot)
+      })
+      response.status(201).json({ snapshot })
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(isValidationError(error) ? 400 : /not found/i.test(message) ? 404 : 403).json({ error: message })
+    }
+  })
+
+  app.patch('/api/kpi-snapshots/:snapshotId', async (request, response) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      const input = kpiSnapshotPatchSchema.parse(request.body)
+      let snapshot: KpiSnapshotRecord | undefined
+      await store.update((state) => {
+        const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+        snapshot = workspace?.kpiSnapshots.find((item) => item.id === request.params.snapshotId)
+        if (!snapshot) throw new Error('KPI snapshot not found.')
+        const completeInput = kpiSnapshotInputSchema.parse({ ...kpiInputFromRecord(snapshot), ...input })
+        Object.assign(snapshot, completeInput, { updatedAt: new Date().toISOString() })
+      })
+      response.json({ snapshot })
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(isValidationError(error) ? 400 : /not found/i.test(message) ? 404 : 403).json({ error: message })
+    }
+  })
+
+  app.delete('/api/kpi-snapshots/:snapshotId', async (request, response) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      await store.update((state) => {
+        const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+        if (!workspace) throw new Error('Workspace not found.')
+        const index = workspace.kpiSnapshots.findIndex((item) => item.id === request.params.snapshotId)
+        if (index < 0) throw new Error('KPI snapshot not found.')
+        workspace.kpiSnapshots.splice(index, 1)
+      })
+      response.json({ ok: true })
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(/not found/i.test(message) ? 404 : 403).json({ error: message })
     }
   })
 

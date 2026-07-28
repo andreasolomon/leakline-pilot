@@ -81,6 +81,62 @@ export type WorkspaceIntegrationState = {
   paymentRecoveryCases: PaymentRecoveryCaseRecord[]
   recoveryPolicy: RecoveryPolicyRecord
   pilotValidation: PilotValidationRecord
+  renewalClients: RenewalClientRecord[]
+  clickUpRenewalImport?: ClickUpRenewalImportRecord
+  kpiSnapshots: KpiSnapshotRecord[]
+}
+
+export type RenewalStatus = 'not_started' | 'renewal_opportunity' | 'conversation_needed' | 'call_booked' | 'decision_pending' | 'renewed' | 'declined'
+
+export type RenewalClientRecord = {
+  id: string
+  name: string
+  email?: string
+  owner: string
+  enrolledAt?: string
+  firstWebinarAt?: string
+  lastWebinarAt?: string
+  nextWebinarAt?: string
+  webinarsHosted: number
+  feedbackScore?: number
+  feedbackNote?: string
+  renewalCallAt?: string
+  renewalStatus: RenewalStatus
+  expectedRenewalValue: number
+  renewalCashCollected: number
+  nextAction?: string
+  source?: 'manual' | 'clickup'
+  clickUpTaskId?: string
+  clickUpStatus?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type ClickUpRenewalImportRecord = {
+  fileName: string
+  importedAt: string
+  importedBy: string
+  sourceRows: number
+  acceptedRows: number
+  created: number
+  updated: number
+  unchanged: number
+}
+
+export type KpiSnapshotRecord = {
+  id: string
+  periodStart: string
+  periodEnd: string
+  bookedCalls: number
+  callsTaken: number
+  deals: number
+  refunds: number
+  totalRevenue: number
+  cashCollected: number
+  notes?: string
+  source: 'manual' | 'clickup'
+  createdAt: string
+  updatedAt: string
 }
 
 export type PaymentRecoveryClassification = 'retryable_failure' | 'payment_method_required' | 'authentication_required' | 'secure_payment_link' | 'human_review'
