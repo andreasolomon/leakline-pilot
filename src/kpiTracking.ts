@@ -9,7 +9,7 @@ export type KpiSnapshot = {
   totalRevenue: number
   cashCollected: number
   notes?: string
-  source: 'manual' | 'clickup'
+  source: 'manual' | 'clickup' | 'csv'
   createdAt: string
   updatedAt: string
 }

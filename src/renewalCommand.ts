@@ -4,6 +4,24 @@ export const INACTIVITY_DAYS = 14
 
 export type RenewalStatus = 'not_started' | 'renewal_opportunity' | 'conversation_needed' | 'call_booked' | 'decision_pending' | 'renewed' | 'declined'
 export type RenewalPipelineStage = 'active_programme' | Exclude<RenewalStatus, 'not_started'>
+export type RenewalOutreachKind = 'feedback_request' | 'renewal_invitation' | 'no_response_follow_up'
+export type RenewalOutreachActivity = {
+  id: string
+  direction: 'outbound' | 'inbound'
+  channel: 'sms' | 'email'
+  kind: RenewalOutreachKind
+  templateKey: string
+  subject?: string
+  body: string
+  providerMessageId?: string
+  conversationId?: string
+  deliveryStatus: 'pending' | 'sent' | 'simulated' | 'failed' | 'received'
+  failureReason?: string
+  daysRemaining?: number
+  renewalStatusAtSend?: RenewalStatus
+  createdAt: string
+  createdBy: string
+}
 
 export const RENEWAL_PIPELINE_STAGES: Array<{ id: RenewalPipelineStage; label: string }> = [
   { id: 'active_programme', label: 'Active program' },
@@ -35,11 +53,13 @@ export type RenewalClient = {
   source?: 'manual' | 'clickup'
   clickUpTaskId?: string
   clickUpStatus?: string
+  crmContactId?: string
+  outreach?: RenewalOutreachActivity[]
   createdAt: string
   updatedAt: string
 }
 
-export type RenewalClientInput = Omit<RenewalClient, 'id' | 'createdAt' | 'updatedAt' | 'source' | 'clickUpTaskId' | 'clickUpStatus'>
+export type RenewalClientInput = Omit<RenewalClient, 'id' | 'createdAt' | 'updatedAt' | 'source' | 'clickUpTaskId' | 'clickUpStatus' | 'crmContactId' | 'outreach'>
 export type ProgrammePhase = 'awaiting_activation' | 'active' | 'inactive' | 'renewal_window' | 'completion_overdue' | 'renewed' | 'declined'
 export type ReadinessLabel = 'High' | 'Medium' | 'Low' | 'Needs feedback' | 'Needs activity'
 
@@ -75,6 +95,17 @@ export function programmePhase(client: RenewalClient, now = new Date()): Program
   const inactiveFor = daysSinceLastWebinar(client, now)
   if (inactiveFor !== undefined && inactiveFor >= INACTIVITY_DAYS) return 'inactive'
   return 'active'
+}
+
+export function renewalOutreachAvailability(client: RenewalClient, now = new Date()) {
+  const phase = programmePhase(client, now)
+  if (['call_booked', 'decision_pending', 'renewed', 'declined'].includes(client.renewalStatus)) {
+    return { available: false, reason: 'Outreach stops after a renewal call is booked or the opportunity is closed.' }
+  }
+  if (phase !== 'renewal_window' && phase !== 'completion_overdue') {
+    return { available: false, reason: 'Assisted outreach becomes available in the final 30 days of the program.' }
+  }
+  return { available: true, reason: 'Ready for assisted feedback and renewal outreach.' }
 }
 
 export function renewalReadiness(client: RenewalClient, now = new Date()) {

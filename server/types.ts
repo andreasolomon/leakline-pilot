@@ -1,4 +1,4 @@
-export type ProviderId = 'stripe' | 'whop' | 'fanbasis' | 'highlevel' | 'google-calendar' | 'fathom'
+export type ProviderId = 'stripe' | 'whop' | 'fanbasis' | 'highlevel' | 'google-calendar' | 'fathom' | 'clickup'
 export type PaymentProviderId = 'stripe' | 'whop' | 'fanbasis'
 
 export type NormalizedRow = Record<string, string | number | boolean | null>
@@ -27,7 +27,7 @@ export type CallRecord = {
   url: string
 }
 
-export type RecordCounts = Partial<Record<DatasetImport['kind'] | 'calls', number>>
+export type RecordCounts = Partial<Record<DatasetImport['kind'] | 'calls' | 'renewalClients', number>>
 
 export type ConnectionMeta = {
   connectedAt: string
@@ -44,6 +44,7 @@ export type FanBasisCredential = { webhookSecret: string; accountLabel: string }
 export type HighLevelCredential = { accessToken: string; locationId: string }
 export type FathomCredential = { apiKey: string }
 export type GoogleCredential = { accessToken: string; refreshToken?: string; expiresAt: number; email?: string }
+export type ClickUpCredential = { apiToken: string; listId: string }
 
 export type CredentialMap = {
   stripe: StripeCredential
@@ -52,6 +53,7 @@ export type CredentialMap = {
   highlevel: HighLevelCredential
   fathom: FathomCredential
   'google-calendar': GoogleCredential
+  clickup: ClickUpCredential
 }
 
 export type StoreState = {
@@ -87,6 +89,25 @@ export type WorkspaceIntegrationState = {
 }
 
 export type RenewalStatus = 'not_started' | 'renewal_opportunity' | 'conversation_needed' | 'call_booked' | 'decision_pending' | 'renewed' | 'declined'
+export type RenewalOutreachKind = 'feedback_request' | 'renewal_invitation' | 'no_response_follow_up'
+export type RenewalOutreachActivityRecord = {
+  id: string
+  idempotencyKey?: string
+  direction: 'outbound' | 'inbound'
+  channel: 'sms' | 'email'
+  kind: RenewalOutreachKind
+  templateKey: string
+  subject?: string
+  body: string
+  providerMessageId?: string
+  conversationId?: string
+  deliveryStatus: 'pending' | 'sent' | 'simulated' | 'failed' | 'received'
+  failureReason?: string
+  daysRemaining?: number
+  renewalStatusAtSend?: RenewalStatus
+  createdAt: string
+  createdBy: string
+}
 
 export type RenewalClientRecord = {
   id: string
@@ -108,6 +129,8 @@ export type RenewalClientRecord = {
   source?: 'manual' | 'clickup'
   clickUpTaskId?: string
   clickUpStatus?: string
+  crmContactId?: string
+  outreach?: RenewalOutreachActivityRecord[]
   createdAt: string
   updatedAt: string
 }
@@ -123,6 +146,17 @@ export type ClickUpRenewalImportRecord = {
   unchanged: number
 }
 
+export type ClickUpRenewalRow = {
+  clickUpTaskId: string
+  name: string
+  email?: string
+  firstWebinarAt?: string
+  lastWebinarAt?: string
+  nextWebinarAt?: string
+  webinarsHosted: number
+  clickUpStatus?: string
+}
+
 export type KpiSnapshotRecord = {
   id: string
   periodStart: string
@@ -134,7 +168,7 @@ export type KpiSnapshotRecord = {
   totalRevenue: number
   cashCollected: number
   notes?: string
-  source: 'manual' | 'clickup'
+  source: 'manual' | 'clickup' | 'csv'
   createdAt: string
   updatedAt: string
 }

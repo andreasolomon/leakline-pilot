@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import request from 'supertest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from './app.js'
-import { syncFathom, syncGoogleCalendar, syncHighLevel, syncStripe } from './providers.js'
+import { syncClickUp, syncFathom, syncGoogleCalendar, syncHighLevel, syncStripe } from './providers.js'
 import { EncryptedStore } from './store.js'
 import { safeErrorMessage } from './safety.js'
 
@@ -45,6 +45,32 @@ describe('Version 2 provider adapters', () => {
     expect(result.leads.rows[0]).toMatchObject({ name: 'Alice', owner: 'Alex Morgan' })
     expect(result.deals.rows[0]).toMatchObject({ stage: 'closed won', value: 12000 })
     expect(result.closers.rows[0]).toMatchObject({ name: 'Alex Morgan', close_rate: 100 })
+  })
+
+  it('normalizes ClickUp Client Manager tasks and custom webinar fields', async () => {
+    const fetcher = vi.fn(async () => reply({ tasks: [{
+      id: 'task-client-1',
+      name: 'Renewal Client',
+      status: { status: 'active' },
+      custom_fields: [
+        { id: 'email', name: 'Email (Short Text)', type: 'short_text', value: 'CLIENT@EXAMPLE.COM' },
+        { id: 'webinar-1', name: 'Webinar 1 Date', type: 'date', value: String(Date.parse('2026-07-01T12:00:00.000Z')) },
+        { id: 'webinar-2', name: 'Webinar 2 Date', type: 'date', value: String(Date.parse('2026-07-20T12:00:00.000Z')) },
+        { id: 'webinar-next', name: 'Webinar NEXT Date', type: 'date', value: String(Date.parse('2026-08-05T12:00:00.000Z')) },
+        { id: 'plan-status', name: 'z Webinar Plan Status z (Drop Down)', type: 'drop_down', value: 'option-active', type_config: { options: [{ id: 'option-active', name: 'In delivery' }] } },
+      ],
+    }] })) as unknown as typeof fetch
+    const rows = await syncClickUp({ apiToken: 'pk_example', listId: 'list-123' }, fetcher)
+    expect(rows[0]).toMatchObject({
+      clickUpTaskId: 'task-client-1',
+      name: 'Renewal Client',
+      email: 'client@example.com',
+      firstWebinarAt: '2026-07-01',
+      lastWebinarAt: '2026-07-20',
+      nextWebinarAt: '2026-08-05',
+      webinarsHosted: 2,
+      clickUpStatus: 'In delivery',
+    })
   })
 
   it('normalizes Google Calendar events as appointments', async () => {
@@ -122,7 +148,7 @@ describe('Version 2 service boundary', () => {
 
       const integrations = await agent.get('/api/integrations')
       expect(integrations.status).toBe(200)
-      expect(integrations.body.statuses).toHaveLength(6)
+      expect(integrations.body.statuses).toHaveLength(7)
 
       await agent.post('/api/auth/logout').send({})
       expect((await agent.get('/api/integrations')).status).toBe(401)
@@ -301,7 +327,7 @@ describe('Version 2 service boundary', () => {
       expect((await request(app).get('/api/health')).body).toEqual({ ok: true, version: 2 })
       const integrations = await request(app).get('/api/integrations')
       expect(integrations.status).toBe(200)
-      expect(integrations.body.statuses).toHaveLength(6)
+      expect(integrations.body.statuses).toHaveLength(7)
     } finally { await rm(directory, { recursive: true, force: true }) }
   })
 
@@ -371,6 +397,29 @@ describe('Version 2 service boundary', () => {
       const synced = await request(app).post('/api/integrations/stripe/sync')
       expect(synced.status).toBe(200)
       expect(synced.body.workspace.payments.rows[0]).toMatchObject({ customer: 'Alice', amount: 3000, status: 'paid' })
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  })
+
+  it('connects a ClickUp pilot List and syncs renewal clients through the real HTTP boundary', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-clickup-'))
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (/\/api\/v2\/list\/list-123$/.test(url)) return reply({ id: 'list-123', name: 'Client Manager' })
+      if (url.includes('/api/v2/list/list-123/task')) return reply({ tasks: [{
+        id: 'task-1',
+        name: 'Pilot Client',
+        status: { status: 'active' },
+        custom_fields: [{ id: 'email', name: 'Email', type: 'email', value: 'pilot@example.com' }],
+      }] })
+      return reply({}, 404)
+    }) as unknown as typeof fetch
+    try {
+      const app = createApp(new EncryptedStore(directory), fetcher)
+      const connected = await request(app).post('/api/integrations/clickup/connect').send({ apiToken: 'pk_12345678901234567890', listId: 'list-123' }).expect(200)
+      expect(connected.body.statuses.find((status: { id: string }) => status.id === 'clickup')).toMatchObject({ connected: true, accountLabel: 'Client Manager · list-123' })
+      await request(app).post('/api/integrations/clickup/sync').expect(200)
+      const renewalClients = await request(app).get('/api/renewal-clients').expect(200)
+      expect(renewalClients.body.clients[0]).toMatchObject({ name: 'Pilot Client', email: 'pilot@example.com', owner: 'Yonas', expectedRenewalValue: 8000, source: 'clickup' })
     } finally { await rm(directory, { recursive: true, force: true }) }
   })
 

@@ -1,12 +1,14 @@
 import { randomBytes } from 'node:crypto'
 import type { EncryptedStore } from './store.js'
 import type { CredentialMap, ProviderId, ProviderStatus, StoreState, WorkspaceRecord } from './types.js'
-import { syncFathom, syncGoogleCalendar, syncHighLevel, syncStripe, syncWhop, validateFathom, validateHighLevel, validateStripe, validateWhop } from './providers.js'
+import { syncClickUp, syncFathom, syncGoogleCalendar, syncHighLevel, syncStripe, syncWhop, validateClickUp, validateFathom, validateHighLevel, validateStripe, validateWhop } from './providers.js'
 import { safeErrorMessage } from './safety.js'
 import { sandboxSync } from './sandbox.js'
 import { reconcilePaymentRecoveryCases } from './paymentRecovery.js'
+import { upsertClickUpRenewalClients } from './renewalImport.js'
 
 const definitions: Array<Pick<ProviderStatus, 'id' | 'label' | 'category' | 'description'>> = [
+  { id: 'clickup', label: 'ClickUp', category: 'Client delivery', description: 'Client records, webinar activity and program status from one List.' },
   { id: 'highlevel', label: 'GoHighLevel', category: 'CRM', description: 'Contacts, opportunities and sales owners.' },
   { id: 'google-calendar', label: 'Google Calendar', category: 'Calendar', description: 'Bookings and attendee matching through read-only OAuth.' },
   { id: 'stripe', label: 'Stripe', category: 'Payments', description: 'Successful, failed, overdue and refunded payments.' },
@@ -51,6 +53,7 @@ export class IntegrationService {
     else if (provider === 'whop') validation = await validateWhop(credential as CredentialMap['whop'], this.fetcher)
     else if (provider === 'fanbasis') validation = { accountLabel: (credential as CredentialMap['fanbasis']).accountLabel || 'FanBasis webhook bridge' }
     else if (provider === 'highlevel') validation = await validateHighLevel(credential as CredentialMap['highlevel'], this.fetcher)
+    else if (provider === 'clickup') validation = await validateClickUp(credential as CredentialMap['clickup'], this.fetcher)
     else validation = await validateFathom(credential as CredentialMap['fathom'], this.fetcher)
     await this.store.update((state) => {
       const workspace = this.getWorkspace(state, workspaceId)
@@ -82,7 +85,23 @@ export class IntegrationService {
       throw new Error(`${provider} is not connected.`)
     }
     try {
-      if (provider === 'stripe') {
+      if (provider === 'clickup') {
+        const rows = await syncClickUp(credential as CredentialMap['clickup'], this.fetcher)
+        await this.store.update((next) => {
+          const target = this.getWorkspace(next, workspaceId)
+          const now = new Date().toISOString()
+          const result = upsertClickUpRenewalClients(target, rows, now)
+          target.clickUpRenewalImport = {
+            fileName: target.connections.clickup?.accountLabel ?? 'Connected ClickUp list',
+            importedAt: now,
+            importedBy: 'ClickUp sync',
+            sourceRows: rows.length,
+            acceptedRows: rows.length,
+            ...result,
+          }
+          this.markSynced(target, provider, { renewalClients: rows.length })
+        })
+      } else if (provider === 'stripe') {
         const payments = await syncStripe(credential as CredentialMap['stripe'], this.fetcher)
         await this.store.update((next) => { const target = this.getWorkspace(next, workspaceId); this.mergePaymentProvider(target, provider, payments); reconcilePaymentRecoveryCases(target); this.markSynced(target, provider, { payments: payments.rows.length }) })
       } else if (provider === 'whop') {
@@ -113,6 +132,7 @@ export class IntegrationService {
   }
 
   async syncSandbox(workspaceId: string, provider: ProviderId) {
+    if (provider === 'clickup') throw new Error('ClickUp sample sync is not available. Connect the pilot List or upload its CSV export.')
     const result = await sandboxSync(provider)
     await this.store.update((state) => {
       const workspace = this.getWorkspace(state, workspaceId)

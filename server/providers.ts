@@ -1,4 +1,4 @@
-import type { CallRecord, DatasetImport, FathomCredential, GoogleCredential, HighLevelCredential, NormalizedRow, StripeCredential, WhopCredential } from './types.js'
+import type { CallRecord, ClickUpCredential, ClickUpRenewalRow, DatasetImport, FathomCredential, GoogleCredential, HighLevelCredential, NormalizedRow, StripeCredential, WhopCredential } from './types.js'
 
 type Fetcher = typeof fetch
 const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -119,6 +119,90 @@ export async function syncStripe(credential: StripeCredential, fetcher: Fetcher 
     })
   })
   return dataset('payments', 'Stripe', rows)
+}
+
+type ClickUpCustomField = {
+  id: string
+  name: string
+  type?: string
+  value?: unknown
+  type_config?: { options?: Array<{ id?: string; name?: string; label?: string; orderindex?: number }> }
+}
+
+type ClickUpTask = {
+  id: string
+  name: string
+  status?: { status?: string }
+  custom_fields?: ClickUpCustomField[]
+}
+
+const clickUpHeaders = (apiToken: string) => ({ Authorization: apiToken, Accept: 'application/json' })
+const normaliseClickUpField = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
+
+function clickUpFieldValue(field: ClickUpCustomField | undefined) {
+  if (!field || field.value === undefined || field.value === null) return ''
+  if (field.type === 'drop_down') {
+    const selected = field.type_config?.options?.find((option) => option.id === String(field.value) || String(option.orderindex) === String(field.value))
+    return selected?.name ?? selected?.label ?? String(field.value)
+  }
+  if (Array.isArray(field.value)) return field.value.map(String).join(', ')
+  return String(field.value)
+}
+
+function clickUpDate(value: string) {
+  if (!value.trim()) return undefined
+  const numeric = Number(value)
+  const timestamp = Number.isFinite(numeric) && numeric > 10_000_000_000 ? numeric : Date.parse(value)
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString().slice(0, 10) : undefined
+}
+
+function clickUpTaskRow(task: ClickUpTask, now = new Date()): ClickUpRenewalRow {
+  const fields = new Map((task.custom_fields ?? []).map((field) => [normaliseClickUpField(field.name), field]))
+  const field = (...names: string[]) => names.map((name) => fields.get(name)).find(Boolean)
+  const emailValue = clickUpFieldValue(field('email_short_text', 'email')).trim().toLowerCase()
+  const today = now.toISOString().slice(0, 10)
+  const completedDates = [...fields.entries()]
+    .filter(([name]) => /^webinar_\d+(?:_date)?$/.test(name))
+    .map(([, value]) => clickUpDate(clickUpFieldValue(value)))
+    .filter((value): value is string => typeof value === 'string' && value <= today)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .sort()
+  const futureDates = [...fields.entries()]
+    .filter(([name]) => name === 'webinar_next_date' || name === 'webinar_next' || /^webinar_\d+(?:_date)?$/.test(name))
+    .map(([, value]) => clickUpDate(clickUpFieldValue(value)))
+    .filter((value): value is string => typeof value === 'string' && value > today)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .sort()
+  return {
+    clickUpTaskId: task.id,
+    name: task.name.trim(),
+    email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue) ? emailValue : undefined,
+    firstWebinarAt: completedDates[0],
+    lastWebinarAt: completedDates.at(-1),
+    nextWebinarAt: futureDates[0],
+    webinarsHosted: completedDates.length,
+    clickUpStatus: clickUpFieldValue(field('z_webinar_plan_status_z_drop_down', 'webinar_plan_status')) || task.status?.status,
+  }
+}
+
+export async function validateClickUp(credential: ClickUpCredential, fetcher: Fetcher = fetch) {
+  const list = await jsonRequest<{ id?: string; name?: string }>(`https://api.clickup.com/api/v2/list/${encodeURIComponent(credential.listId)}`, { headers: clickUpHeaders(credential.apiToken) }, fetcher)
+  return { accountLabel: list.name ? `${list.name} · ${credential.listId}` : `ClickUp list ${credential.listId}` }
+}
+
+export async function syncClickUp(credential: ClickUpCredential, fetcher: Fetcher = fetch) {
+  const tasks: ClickUpTask[] = []
+  for (let page = 0; page < 50; page += 1) {
+    const url = new URL(`https://api.clickup.com/api/v2/list/${encodeURIComponent(credential.listId)}/task`)
+    url.searchParams.set('page', String(page))
+    url.searchParams.set('include_closed', 'true')
+    url.searchParams.set('subtasks', 'false')
+    const result = await jsonRequest<{ tasks?: ClickUpTask[] }>(url.toString(), { headers: clickUpHeaders(credential.apiToken) }, fetcher)
+    const batch = result.tasks ?? []
+    tasks.push(...batch)
+    if (batch.length < 100) break
+  }
+  return tasks.filter((task) => task.id && task.name?.trim()).map((task) => clickUpTaskRow(task))
 }
 
 type WhopPayment = {
@@ -279,10 +363,11 @@ export async function syncHighLevel(credential: HighLevelCredential, fetcher: Fe
   return { leads: dataset('leads', 'GoHighLevel', leads), deals: dataset('deals', 'GoHighLevel', deals), closers: dataset('closers', 'GoHighLevel', closerRows) }
 }
 
-export async function sendHighLevelRecoveryMessage(credential: HighLevelCredential, input: { contactId: string; channel: 'sms' | 'email'; body: string; subject?: string; fromEmail?: string; fromNumber?: string }, fetcher: Fetcher = fetch) {
+export async function sendHighLevelMessage(credential: HighLevelCredential, input: { contactId: string; channel: 'sms' | 'email'; body: string; subject?: string; fromEmail?: string; fromNumber?: string }, fetcher: Fetcher = fetch) {
+  const emailHtml = input.body.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[character]!).replace(/\n/g, '<br>')
   const payload = input.channel === 'sms'
     ? { type: 'SMS', contactId: input.contactId, message: input.body, status: 'pending', ...(input.fromNumber ? { fromNumber: input.fromNumber } : {}) }
-    : { type: 'Email', contactId: input.contactId, subject: input.subject ?? 'Payment follow-up', html: input.body.replace(/\n/g, '<br>'), message: input.body, status: 'pending', ...(input.fromEmail ? { emailFrom: input.fromEmail } : {}) }
+    : { type: 'Email', contactId: input.contactId, subject: input.subject ?? 'Follow-up', html: emailHtml, message: input.body, status: 'pending', ...(input.fromEmail ? { emailFrom: input.fromEmail } : {}) }
   const result = await jsonRequest<{ messageId?: string; conversationId?: string; id?: string }>('https://services.leadconnectorhq.com/conversations/messages', {
     method: 'POST',
     headers: { ...highLevelHeaders(credential.accessToken), 'Content-Type': 'application/json' },
@@ -290,6 +375,8 @@ export async function sendHighLevelRecoveryMessage(credential: HighLevelCredenti
   }, fetcher)
   return { messageId: result.messageId ?? result.id, conversationId: result.conversationId }
 }
+
+export const sendHighLevelRecoveryMessage = sendHighLevelMessage
 
 async function validGoogleToken(credential: GoogleCredential, clientId: string, clientSecret: string, fetcher: Fetcher) {
   if (credential.expiresAt > Date.now() + 60_000) return credential

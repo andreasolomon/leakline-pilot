@@ -315,11 +315,15 @@ describe.sequential('server hardening', () => {
       const created = await owner.post('/api/kpi-snapshots').send(payload).expect(201)
       expect(created.body.snapshot.source).toBe('manual')
       expect((await owner.get('/api/kpi-snapshots').expect(200)).body.snapshots).toHaveLength(1)
+      const imported = await owner.post('/api/kpi-snapshots/import').send({ ...payload, cashCollected: 16_000, notes: 'Imported Gross Totals.' }).expect(200)
+      expect(imported.body).toMatchObject({ action: 'updated', snapshot: { id: created.body.snapshot.id, source: 'csv', cashCollected: 16_000 } })
+      expect((await owner.get('/api/kpi-snapshots').expect(200)).body.snapshots).toHaveLength(1)
 
       await owner.post('/api/admin/users').send({ name: 'Launch Viewer', email: 'viewer@example.com', password: 'viewer-pass-123', role: 'viewer', workspaceIds: [launch.body.workspaceId] }).expect(201)
       const viewer = request.agent(app)
       await viewer.post('/api/auth/login').send({ email: 'viewer@example.com', password: 'viewer-pass-123' }).expect(200)
-      expect((await viewer.get('/api/kpi-snapshots').expect(200)).body.snapshots[0].cashCollected).toBe(15_000)
+      expect((await viewer.get('/api/kpi-snapshots').expect(200)).body.snapshots[0].cashCollected).toBe(16_000)
+      await viewer.post('/api/kpi-snapshots/import').send(payload).expect(403)
       await viewer.patch(`/api/kpi-snapshots/${created.body.snapshot.id}`).send({ cashCollected: 16_000 }).expect(403)
       await viewer.delete(`/api/kpi-snapshots/${created.body.snapshot.id}`).expect(403)
 

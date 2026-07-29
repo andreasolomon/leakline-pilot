@@ -137,11 +137,11 @@ export default function KpiTrackingPage({ canAct, workspaceId }: { canAct: boole
     {!selected ? <article className="panel kpi-empty">
       <BarChart3 size={34} />
       <h2>No KPI periods tracked yet</h2>
-      <p>Add the first reporting period manually. ClickUp will later populate the same figures automatically.</p>
+      <p>Add the first reporting period manually, or upload the exported Gross Totals CSV from Data Sources.</p>
       {canAct && <button className="primary-button" onClick={openCreate}><Plus size={14} /> Add first period</button>}
     </article> : <>
       <div className="kpi-period-strip">
-        <span><CalendarDays size={15} /><strong>{periodLabel(selected)}</strong><small>{selected.source === 'clickup' ? 'Synced from ClickUp' : 'Manually recorded'}</small></span>
+        <span><CalendarDays size={15} /><strong>{periodLabel(selected)}</strong><small>{selected.source === 'clickup' ? 'Synced from ClickUp' : selected.source === 'csv' ? 'Imported from KPI sheet' : 'Manually recorded'}</small></span>
         <div>{canAct && <><button onClick={() => openEdit(selected)}><Pencil size={14} /> Edit period</button><button className="danger" onClick={() => void remove(selected)} disabled={busy === selected.id}><Trash2 size={14} /> Remove</button></>}</div>
       </div>
 

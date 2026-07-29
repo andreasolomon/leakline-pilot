@@ -26,6 +26,6 @@ export const emptyRenewalClient = (): RenewalClientInput => ({
 })
 
 export function inputFromRenewalClient(client: RenewalClient): RenewalClientInput {
-  const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, source: _source, clickUpTaskId: _clickUpTaskId, clickUpStatus: _clickUpStatus, ...input } = client
+  const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, source: _source, clickUpTaskId: _clickUpTaskId, clickUpStatus: _clickUpStatus, crmContactId: _crmContactId, outreach: _outreach, ...input } = client
   return input
 }

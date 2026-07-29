@@ -14,8 +14,10 @@ import { PaymentRecoveryService } from './paymentRecoveryService.js'
 import { normalizeFanBasisPayment } from './providers.js'
 import { reconcilePaymentRecoveryCases } from './paymentRecovery.js'
 import { createRateLimiter, requireSameOriginMutation, securityHeaders } from './requestProtection.js'
+import { upsertClickUpRenewalClients } from './renewalImport.js'
+import { RenewalOutreachService } from './renewalOutreach.js'
 
-const providerSchema = z.enum(['stripe', 'whop', 'fanbasis', 'highlevel', 'google-calendar', 'fathom'])
+const providerSchema = z.enum(['stripe', 'whop', 'fanbasis', 'highlevel', 'google-calendar', 'fathom', 'clickup'])
 const isValidationError = (error: unknown) => error instanceof z.ZodError || Boolean(error && typeof error === 'object' && Array.isArray((error as { issues?: unknown }).issues))
 const roleSchema = z.enum(['owner', 'admin', 'manager', 'viewer'])
 const inviteRoleSchema = z.enum(['admin', 'manager', 'viewer'])
@@ -75,6 +77,14 @@ const pilotValidationSchema = z.object({
 })
 const optionalDateSchema = z.union([z.string().date(), z.literal('')]).transform((value) => value || undefined)
 const renewalStatusSchema = z.enum(['not_started', 'renewal_opportunity', 'conversation_needed', 'call_booked', 'decision_pending', 'renewed', 'declined'])
+const renewalOutreachKindSchema = z.enum(['feedback_request', 'renewal_invitation', 'no_response_follow_up'])
+const renewalOutreachPreviewSchema = z.object({ channel: z.enum(['sms', 'email']), kind: renewalOutreachKindSchema }).strict()
+const renewalOutreachSendSchema = renewalOutreachPreviewSchema.extend({
+  subject: z.string().trim().max(180).optional(),
+  body: z.string().trim().min(10).max(5_000),
+  approved: z.literal(true),
+  idempotencyKey: z.string().trim().min(8).max(100),
+}).strict()
 const renewalClientFieldsSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.union([z.string().trim().email().max(160), z.literal('')]).optional().transform((value) => value || undefined),
@@ -195,6 +205,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
   const auth = new AuthService(store)
   const recoveryRepository = new EncryptedPaymentRecoveryRepository(store)
   const paymentRecovery = new PaymentRecoveryService(store, recoveryRepository, fetcher)
+  const renewalOutreach = new RenewalOutreachService(store, fetcher)
   if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1)
   app.disable('x-powered-by')
   app.use(securityHeaders)
@@ -356,12 +367,32 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
       const workspace = state.workspaces.find((item) => item.credentials.highlevel?.locationId === input.locationId && !item.archivedAt)
       if (!workspace) return response.status(200).json({ ok: true, ignored: 'workspace_not_found' })
       const providerMessageId = input.messageId ?? input.emailMessageId
-      if (providerMessageId && workspace.paymentRecoveryCases.some((item) => item.attempts.some((attempt) => attempt.providerMessageId === providerMessageId))) return response.status(200).json({ ok: true, ignored: 'duplicate_message' })
+      if (providerMessageId && (workspace.paymentRecoveryCases.some((item) => item.attempts.some((attempt) => attempt.providerMessageId === providerMessageId))
+        || workspace.renewalClients.some((client) => client.outreach?.some((activity) => activity.providerMessageId === providerMessageId)))) {
+        return response.status(200).json({ ok: true, ignored: 'duplicate_message' })
+      }
       const candidates = workspace.paymentRecoveryCases.filter((item) => item.contactId === input.contactId && !['recovered', 'closed_unrecovered'].includes(item.status))
       const latestOutboundAt = (item: typeof candidates[number]) => item.attempts.filter((attempt) => attempt.direction === 'outbound').map((attempt) => attempt.createdAt).sort().at(-1) ?? item.updatedAt
-      const recoveryCase = candidates.find((item) => input.conversationId && item.conversationId === input.conversationId)
+      const exactRecoveryCase = candidates.find((item) => input.conversationId && item.conversationId === input.conversationId)
+      const renewalCandidates = workspace.renewalClients.filter((client) => client.crmContactId === input.contactId && !['call_booked', 'decision_pending', 'renewed', 'declined'].includes(client.renewalStatus))
+      const exactRenewalClient = renewalCandidates.find((client) => input.conversationId && client.outreach?.some((activity) => activity.conversationId === input.conversationId))
+      if (exactRenewalClient && !exactRecoveryCase) {
+        const channel = input.messageType?.toLowerCase() === 'email' ? 'email' : 'sms'
+        await renewalOutreach.recordInbound(workspace.id, exactRenewalClient.id, { channel, body: input.body, providerMessageId, conversationId: input.conversationId }, exactRenewalClient.name)
+        return response.status(202).json({ ok: true, renewalClientId: exactRenewalClient.id })
+      }
+      const recoveryCase = exactRecoveryCase
         ?? [...candidates].sort((left, right) => latestOutboundAt(right).localeCompare(latestOutboundAt(left)))[0]
-      if (!recoveryCase) return response.status(200).json({ ok: true, ignored: 'recovery_case_not_found' })
+      if (!recoveryCase) {
+        const latestRenewalClient = [...renewalCandidates].sort((left, right) => {
+          const latest = (client: typeof renewalCandidates[number]) => client.outreach?.filter((activity) => activity.direction === 'outbound').map((activity) => activity.createdAt).sort().at(-1) ?? client.updatedAt
+          return latest(right).localeCompare(latest(left))
+        })[0]
+        if (!latestRenewalClient) return response.status(200).json({ ok: true, ignored: 'outreach_record_not_found' })
+        const channel = input.messageType?.toLowerCase() === 'email' ? 'email' : 'sms'
+        await renewalOutreach.recordInbound(workspace.id, latestRenewalClient.id, { channel, body: input.body, providerMessageId, conversationId: input.conversationId }, latestRenewalClient.name)
+        return response.status(202).json({ ok: true, renewalClientId: latestRenewalClient.id })
+      }
       const channel = input.messageType?.toLowerCase() === 'email' ? 'email' : 'sms'
       await recoveryRepository.addAttempt(workspace.id, recoveryCase.id, { channel, direction: 'inbound', summary: 'Customer response received through GoHighLevel.', body: input.body, providerMessageId, conversationId: input.conversationId, createdBy: recoveryCase.customerName })
       response.status(202).json({ ok: true, caseId: recoveryCase.id })
@@ -702,6 +733,27 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     })
   })
 
+  app.post('/api/renewal-clients/:clientId/outreach/preview', async (request, response) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      response.json(await renewalOutreach.preview(activeWorkspaceId(response), request.params.clientId, renewalOutreachPreviewSchema.parse(request.body)))
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(error instanceof z.ZodError ? 400 : /not found/i.test(message) ? 404 : /manager|access/i.test(message) ? 403 : 409).json({ error: message })
+    }
+  })
+
+  app.post('/api/renewal-clients/:clientId/outreach/send', async (request, response) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      const result = await renewalOutreach.send(activeWorkspaceId(response), request.params.clientId, renewalOutreachSendSchema.parse(request.body), response.locals.user as PublicUser)
+      response.json(result)
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(error instanceof z.ZodError ? 400 : /not found/i.test(message) ? 404 : /manager|access/i.test(message) ? 403 : 409).json({ error: message })
+    }
+  })
+
   app.post('/api/renewal-clients', async (request, response) => {
     try {
       auth.requireDataEditor(response.locals.user as PublicUser)
@@ -711,7 +763,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
       await store.update((state) => {
         const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
         if (!workspace) throw new Error('Workspace not found.')
-        client = { id: `renewal-${randomBytes(8).toString('hex')}`, ...input, source: 'manual', createdAt: now, updatedAt: now }
+        client = { id: `renewal-${randomBytes(8).toString('hex')}`, ...input, outreach: [], source: 'manual', createdAt: now, updatedAt: now }
         workspace.renewalClients.push(client)
       })
       response.status(201).json({ client })
@@ -768,56 +820,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
       await store.update((state) => {
         const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
         if (!workspace) throw new Error('Workspace not found.')
-        const seenTaskIds = new Set<string>()
-        const seenEmails = new Set<string>()
-        for (const row of input.rows) {
-          const emailKey = row.email?.toLowerCase()
-          if (seenTaskIds.has(row.clickUpTaskId) || emailKey && seenEmails.has(emailKey)) throw new Error('The ClickUp import contains duplicate client records.')
-          seenTaskIds.add(row.clickUpTaskId)
-          if (emailKey) seenEmails.add(emailKey)
-
-          const existing = workspace.renewalClients.find((client) => client.clickUpTaskId === row.clickUpTaskId)
-            ?? (emailKey ? workspace.renewalClients.find((client) => client.email?.toLowerCase() === emailKey) : undefined)
-          if (!existing) {
-            workspace.renewalClients.push({
-              id: `renewal-${randomBytes(8).toString('hex')}`,
-              name: row.name,
-              email: row.email,
-              owner: 'Yonas',
-              firstWebinarAt: row.firstWebinarAt,
-              lastWebinarAt: row.lastWebinarAt,
-              nextWebinarAt: row.nextWebinarAt,
-              webinarsHosted: row.webinarsHosted,
-              renewalStatus: 'not_started',
-              expectedRenewalValue: 8_000,
-              renewalCashCollected: 0,
-              source: 'clickup',
-              clickUpTaskId: row.clickUpTaskId,
-              clickUpStatus: row.clickUpStatus,
-              createdAt: now,
-              updatedAt: now,
-            })
-            result.created += 1
-            continue
-          }
-
-          const sourceFields = {
-            name: row.name,
-            email: row.email,
-            firstWebinarAt: row.firstWebinarAt,
-            lastWebinarAt: row.lastWebinarAt,
-            nextWebinarAt: row.nextWebinarAt,
-            webinarsHosted: row.webinarsHosted,
-            source: 'clickup' as const,
-            clickUpTaskId: row.clickUpTaskId,
-            clickUpStatus: row.clickUpStatus,
-          }
-          const changed = Object.entries(sourceFields).some(([key, value]) => existing[key as keyof RenewalClientRecord] !== value)
-          if (changed) {
-            Object.assign(existing, sourceFields, { updatedAt: now })
-            result.updated += 1
-          } else result.unchanged += 1
-        }
+        result = upsertClickUpRenewalClients(workspace, input.rows, now)
         workspace.clickUpRenewalImport = {
           fileName: input.fileName.split(/[\\/]/).at(-1) ?? 'ClickUp export.csv',
           importedAt: now,
@@ -858,6 +861,32 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     } catch (error) {
       const message = safeErrorMessage(error)
       response.status(isValidationError(error) ? 400 : /not found/i.test(message) ? 404 : 403).json({ error: message })
+    }
+  })
+
+  app.post('/api/kpi-snapshots/import', async (request, response) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      const input = kpiSnapshotInputSchema.parse(request.body)
+      const now = new Date().toISOString()
+      let snapshot: KpiSnapshotRecord | undefined
+      let action: 'created' | 'updated' = 'created'
+      await store.update((state) => {
+        const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+        if (!workspace) throw new Error('Workspace not found.')
+        snapshot = workspace.kpiSnapshots.find((item) => item.periodStart === input.periodStart && item.periodEnd === input.periodEnd)
+        if (snapshot) {
+          Object.assign(snapshot, input, { source: 'csv' as const, updatedAt: now })
+          action = 'updated'
+        } else {
+          snapshot = { id: `kpi-${randomBytes(8).toString('hex')}`, ...input, source: 'csv', createdAt: now, updatedAt: now }
+          workspace.kpiSnapshots.push(snapshot)
+        }
+      })
+      response.status(action === 'created' ? 201 : 200).json({ snapshot, action })
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(isValidationError(error) ? 400 : /access|manager/i.test(message) ? 403 : 400).json({ error: message })
     }
   })
 
@@ -1085,6 +1114,8 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
             ? z.object({ webhookSecret: z.string().min(24), accountLabel: z.string().min(2).max(100) }).parse(request.body)
         : provider === 'highlevel'
           ? z.object({ accessToken: z.string().min(20), locationId: z.string().min(5) }).parse(request.body)
+          : provider === 'clickup'
+            ? z.object({ apiToken: z.string().min(20).regex(/^pk_/, 'Use a ClickUp personal API token beginning with pk_.'), listId: z.string().trim().min(3).max(100).regex(/^[A-Za-z0-9_-]+$/, 'Use the List ID from the ClickUp List URL.') }).parse(request.body)
           : z.object({ apiKey: z.string().min(10) }).parse(request.body)
       await service.connect(activeWorkspaceId(response), provider, credential as never)
       response.json(await service.snapshot(activeWorkspaceId(response)))

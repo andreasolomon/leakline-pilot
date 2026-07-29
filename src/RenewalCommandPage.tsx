@@ -1,7 +1,6 @@
-import { type ChangeEvent, type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, CalendarClock, CheckCircle2, FileUp, MessageSquareQuote, Pencil, Plus, RefreshCw, Search, Sparkles, Trash2, UsersRound, Video, X } from 'lucide-react'
-import { classifyClickUpImport, parseClickUpRenewalCsv, type ClickUpRenewalPreview } from './clickUpRenewalImport'
-import { daysUntilProgrammeEnd, programmeEndDate, programmePhase, recommendedRenewalAction, RENEWAL_PIPELINE_STAGES, renewalPipelineStage, renewalPipelineSummary, renewalReadiness, renewalStatusForPipelineStage, renewalSummary, type ProgrammePhase, type RenewalClient, type RenewalClientInput, type RenewalPipelineStage } from './renewalCommand'
+import { type FormEvent, useEffect, useMemo, useState } from 'react'
+import { AlertTriangle, CalendarClock, CheckCircle2, Mail, MessageSquareQuote, MessageSquareText, Pencil, Plus, RefreshCw, Search, Send, Smartphone, Trash2, UsersRound, Video, X } from 'lucide-react'
+import { daysUntilProgrammeEnd, programmeEndDate, programmePhase, recommendedRenewalAction, RENEWAL_PIPELINE_STAGES, renewalOutreachAvailability, renewalPipelineStage, renewalPipelineSummary, renewalReadiness, renewalStatusForPipelineStage, renewalSummary, type ProgrammePhase, type RenewalClient, type RenewalClientInput, type RenewalOutreachActivity, type RenewalOutreachKind, type RenewalPipelineStage } from './renewalCommand'
 import { emptyRenewalClient, inputFromRenewalClient, renewalApi } from './renewalCommandClient'
 
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
@@ -36,6 +35,21 @@ type ClickUpImportMeta = {
   unchanged: number
 }
 
+type RenewalOutreachPreview = {
+  channel: 'sms' | 'email'
+  kind: RenewalOutreachKind
+  to?: string
+  subject?: string
+  body: string
+  templateKey: string
+  canSend: boolean
+  reason: string
+  daysRemaining?: number
+  contactMatched: boolean
+  highLevelConnected: boolean
+  history: RenewalOutreachActivity[]
+}
+
 function formatDate(value?: string) {
   if (!value) return 'Not set'
   return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value.slice(0, 10)}T00:00:00.000Z`))
@@ -49,7 +63,7 @@ function programmeTiming(client: RenewalClient) {
   return `${remaining} days remaining`
 }
 
-export default function RenewalCommandPage({ canAct, workspaceId }: { canAct: boolean; workspaceId: string }) {
+export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSources }: { canAct: boolean; workspaceId: string; onOpenDataSources?: () => void }) {
   const [clients, setClients] = useState<RenewalClient[]>([])
   const [search, setSearch] = useState('')
   const [phaseFilter, setPhaseFilter] = useState<'all' | ProgrammePhase>('all')
@@ -61,8 +75,15 @@ export default function RenewalCommandPage({ canAct, workspaceId }: { canAct: bo
   const [draft, setDraft] = useState<RenewalClientInput>(emptyRenewalClient)
   const [editorOpen, setEditorOpen] = useState(false)
   const [clickUpImport, setClickUpImport] = useState<ClickUpImportMeta | undefined>()
-  const [clickUpPreview, setClickUpPreview] = useState<ClickUpRenewalPreview | null>(null)
-  const clickUpInput = useRef<HTMLInputElement>(null)
+  const [outreachOpen, setOutreachOpen] = useState(false)
+  const [outreachClient, setOutreachClient] = useState<RenewalClient | undefined>()
+  const [outreachKind, setOutreachKind] = useState<RenewalOutreachKind>('renewal_invitation')
+  const [outreachChannel, setOutreachChannel] = useState<'sms' | 'email'>('email')
+  const [outreachPreview, setOutreachPreview] = useState<RenewalOutreachPreview | undefined>()
+  const [outreachSubject, setOutreachSubject] = useState('')
+  const [outreachBody, setOutreachBody] = useState('')
+  const [outreachApproved, setOutreachApproved] = useState(false)
+  const [outreachKey, setOutreachKey] = useState('')
 
   const load = async () => {
     setBusy('loading')
@@ -96,7 +117,6 @@ export default function RenewalCommandPage({ canAct, workspaceId }: { canAct: bo
     .filter((client) => client.feedbackScore !== undefined)
     .sort((left, right) => renewalReadiness(right).score - renewalReadiness(left).score)
     .slice(0, 6), [clients])
-  const clickUpChanges = useMemo(() => clickUpPreview ? classifyClickUpImport(clickUpPreview.rows, clients) : null, [clickUpPreview, clients])
 
   const openCreate = () => {
     setEditingId('')
@@ -181,43 +201,72 @@ export default function RenewalCommandPage({ canAct, workspaceId }: { canAct: bo
     }
   }
 
-  const previewClickUpFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
+  const fetchOutreachPreview = async (client: RenewalClient, kind: RenewalOutreachKind, channel: 'sms' | 'email') => {
+    setBusy(`outreach-${client.id}`)
     setError('')
-    setNotice('')
-    if (file.size > 5 * 1024 * 1024) {
-      setError('The ClickUp export is too large. Choose a CSV smaller than 5 MB.')
-      return
-    }
+    setOutreachApproved(false)
     try {
-      const preview = parseClickUpRenewalCsv(file.name, await file.text())
-      if (!preview.rows.length) {
-        setError(preview.issues.join(' ') || 'No valid ClickUp clients were found.')
-        return
-      }
-      setClickUpPreview(preview)
-    } catch {
-      setError('The ClickUp CSV could not be read. Export the Client Manager list as CSV and try again.')
+      const preview = await renewalApi<RenewalOutreachPreview>(`/api/renewal-clients/${client.id}/outreach/preview`, {
+        method: 'POST',
+        body: JSON.stringify({ kind, channel }),
+      })
+      setOutreachPreview(preview)
+      setOutreachSubject(preview.subject ?? '')
+      setOutreachBody(preview.body)
+    } catch (event) {
+      setOutreachPreview(undefined)
+      setError(event instanceof Error ? event.message : 'The renewal message could not be prepared.')
+    } finally {
+      setBusy('')
     }
   }
 
-  const importClickUp = async () => {
-    if (!clickUpPreview) return
-    setBusy('clickup-import')
+  const openOutreach = (client: RenewalClient) => {
+    const kind: RenewalOutreachKind = client.feedbackScore === undefined ? 'feedback_request' : 'renewal_invitation'
+    const channel: 'sms' | 'email' = client.email ? 'email' : 'sms'
+    setOutreachClient(client)
+    setOutreachKind(kind)
+    setOutreachChannel(channel)
+    setOutreachKey(crypto.randomUUID())
+    setOutreachOpen(true)
+    setNotice('')
+    void fetchOutreachPreview(client, kind, channel)
+  }
+
+  const changeOutreachDraft = (kind: RenewalOutreachKind, channel: 'sms' | 'email') => {
+    if (!outreachClient) return
+    setOutreachKind(kind)
+    setOutreachChannel(channel)
+    setOutreachKey(crypto.randomUUID())
+    void fetchOutreachPreview(outreachClient, kind, channel)
+  }
+
+  const sendOutreach = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!outreachClient || !outreachPreview) return
+    setBusy(`send-outreach-${outreachClient.id}`)
     setError('')
     try {
-      const body = await renewalApi<{ clients: RenewalClient[]; clickUpImport: ClickUpImportMeta; result: { created: number; updated: number; unchanged: number } }>('/api/renewal-clients/import-clickup', {
+      const result = await renewalApi<{ client: RenewalClient; simulated: boolean }>(`/api/renewal-clients/${outreachClient.id}/outreach/send`, {
         method: 'POST',
-        body: JSON.stringify({ fileName: clickUpPreview.fileName, sourceRows: clickUpPreview.sourceRows, rows: clickUpPreview.rows }),
+        body: JSON.stringify({
+          kind: outreachKind,
+          channel: outreachChannel,
+          subject: outreachChannel === 'email' ? outreachSubject : undefined,
+          body: outreachBody,
+          approved: outreachApproved,
+          idempotencyKey: outreachKey,
+        }),
       })
-      setClients(body.clients)
-      setClickUpImport(body.clickUpImport)
-      setClickUpPreview(null)
-      setNotice(`ClickUp import complete: ${body.result.created} created, ${body.result.updated} updated and ${body.result.unchanged} unchanged.`)
+      setClients((current) => current.map((client) => client.id === result.client.id ? result.client : client))
+      setOutreachClient(result.client)
+      setOutreachPreview((current) => current ? { ...current, history: [...(result.client.outreach ?? [])].sort((left, right) => right.createdAt.localeCompare(left.createdAt)) } : current)
+      setOutreachApproved(false)
+      setOutreachKey(crypto.randomUUID())
+      setNotice(`${outreachChannel === 'sms' ? 'SMS' : 'Email'} ${result.simulated ? 'simulated' : 'sent'} for ${result.client.name}.`)
     } catch (event) {
-      setError(event instanceof Error ? event.message : 'The ClickUp clients could not be imported.')
+      setOutreachKey(crypto.randomUUID())
+      setError(event instanceof Error ? event.message : 'The renewal message could not be sent.')
     } finally {
       setBusy('')
     }
@@ -233,8 +282,7 @@ export default function RenewalCommandPage({ canAct, workspaceId }: { canAct: bo
         <span>Track activation, webinar participation, client feedback and every renewal opportunity from one place.</span>
       </div>
       {canAct && <div className="renewal-heading-actions">
-        <input ref={clickUpInput} className="clickup-file-input" type="file" accept=".csv,text/csv" onChange={previewClickUpFile} />
-        <button className="ghost-button clickup-import-button" onClick={() => clickUpInput.current?.click()}><FileUp size={15} /> Import from ClickUp</button>
+        {onOpenDataSources && <button className="ghost-button clickup-import-button" onClick={onOpenDataSources}>Update source data</button>}
         <button className="primary-button" onClick={openCreate}><Plus size={15} /> Add client</button>
       </div>}
     </div>
@@ -256,7 +304,7 @@ export default function RenewalCommandPage({ canAct, workspaceId }: { canAct: bo
 
     <article className="panel renewal-pipeline-panel">
       <div className="panel-head">
-        <div><span className="eyebrow"><Sparkles size={14} /> Recurring-revenue workflow</span><h2>Client renewal pipeline</h2></div>
+        <div><h2>Client renewal pipeline</h2></div>
         {pipelineFilter !== 'all' && <button className="renewal-pipeline-clear" onClick={() => setPipelineFilter('all')}>Clear stage filter</button>}
       </div>
       <p className="renewal-pipeline-explainer">LeakLine automatically identifies approaching renewal opportunities. Fred and Yonas can move each client forward as the renewal conversation progresses.</p>
@@ -279,8 +327,7 @@ export default function RenewalCommandPage({ canAct, workspaceId }: { canAct: bo
     <div className="renewal-command-grid">
       <article className="panel renewal-queue-panel">
         <div className="panel-head">
-          <div><span className="eyebrow"><Sparkles size={14} /> Ranked by urgency and readiness</span><h2>Client renewal queue</h2></div>
-          <span className="renewal-rule-chip">90-day program · 14-day inactivity check</span>
+          <div><h2>Client renewal queue</h2></div>
         </div>
         <div className="renewal-toolbar">
           <label><Search size={14} /><input aria-label="Search renewal clients" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search clients, owners or feedback…" /></label>
@@ -316,20 +363,20 @@ export default function RenewalCommandPage({ canAct, workspaceId }: { canAct: bo
                 <small>{client.expectedRenewalValue ? `${money.format(client.expectedRenewalValue)} expected` : 'Value not set'}</small>
               </span>
               <span className="renewal-next-action">{recommendedRenewalAction(client)}</span>
-              <span className="renewal-row-actions">{canAct && <><button aria-label={`Update ${client.name}`} onClick={() => openEdit(client)}><Pencil size={14} /></button><button aria-label={`Remove ${client.name}`} onClick={() => void deleteClient(client)}><Trash2 size={14} /></button></>}</span>
+              <span className="renewal-row-actions">{canAct && <><button aria-label={`Message ${client.name}`} disabled={!renewalOutreachAvailability(client).available} title={renewalOutreachAvailability(client).reason} onClick={() => openOutreach(client)}><MessageSquareText size={14} /></button><button aria-label={`Update ${client.name}`} onClick={() => openEdit(client)}><Pencil size={14} /></button><button aria-label={`Remove ${client.name}`} onClick={() => void deleteClient(client)}><Trash2 size={14} /></button></>}</span>
             </div>
           })}
           {!filtered.length && <div className="renewal-empty">
             <CalendarClock size={28} />
             <h3>{clients.length ? 'No clients match these filters' : 'No renewal clients tracked yet'}</h3>
-            <p>{clients.length ? 'Change the pipeline stage, program phase or search.' : 'Import the Client Manager CSV from ClickUp, or add the first client manually.'}</p>
+            <p>{clients.length ? 'Change the pipeline stage, program phase or search.' : 'Connect or import the Client Manager List from Data Sources, or add the first client manually.'}</p>
             {canAct && !clients.length && <button className="primary-button" onClick={openCreate}><Plus size={14} /> Add first client</button>}
           </div>}
         </div>
       </article>
 
       <aside className="panel feedback-readiness-panel">
-        <div className="panel-head"><div><span className="eyebrow"><MessageSquareQuote size={14} /> Client voice</span><h2>Feedback and readiness</h2></div></div>
+        <div className="panel-head"><div><h2>Feedback and readiness</h2></div></div>
         <p className="feedback-explainer">Readiness combines webinar usage (50 points), recency (20) and client feedback (30). It is an explainable priority signal, not a guaranteed prediction.</p>
         {feedbackClients.length ? <div className="feedback-client-list">{feedbackClients.map((client) => {
           const readiness = renewalReadiness(client)
@@ -384,47 +431,56 @@ export default function RenewalCommandPage({ canAct, workspaceId }: { canAct: bo
       </form>
     </div>}
 
-    {clickUpPreview && clickUpChanges && <div className="connection-modal-backdrop" onClick={() => busy !== 'clickup-import' && setClickUpPreview(null)}>
-      <section className="connection-modal clickup-preview-modal" onClick={(event) => event.stopPropagation()}>
-        <button className="modal-close" disabled={busy === 'clickup-import'} onClick={() => setClickUpPreview(null)}><X size={18} /></button>
-        <span className="eyebrow"><FileUp size={14} /> ClickUp import preview</span>
-        <h2>Review before updating Renewal Command</h2>
-        <p>New clients start with Yonas as the renewal owner and $8,000 expected value. Existing feedback, renewal stages, values, cash and manual notes are preserved.</p>
+    {outreachOpen && outreachClient && <div className="connection-modal-backdrop" onClick={() => setOutreachOpen(false)}>
+      <form className="connection-modal renewal-outreach-modal" onSubmit={sendOutreach} onClick={(event) => event.stopPropagation()}>
+        <button type="button" className="modal-close" onClick={() => setOutreachOpen(false)}><X size={18} /></button>
+        <span className="eyebrow">Assisted renewal outreach</span>
+        <h2>Message {outreachClient.name}</h2>
+        <p>LeakLine prepares the draft. Review and approve the exact wording before anything is sent through GoHighLevel.</p>
 
-        <div className="clickup-preview-summary">
-          <article><span>Valid clients</span><strong>{clickUpPreview.rows.length}</strong><small>{clickUpPreview.sourceRows} source rows</small></article>
-          <article><span>New clients</span><strong>{clickUpChanges.create}</strong><small>Will be added</small></article>
-          <article><span>Updates</span><strong>{clickUpChanges.update}</strong><small>Matched by Task ID or email</small></article>
-          <article><span>Unchanged</span><strong>{clickUpChanges.unchanged}</strong><small>No duplicate created</small></article>
+        <div className="renewal-outreach-layout">
+          <section className="renewal-outreach-draft">
+            <div className="renewal-outreach-context">
+              <span><strong>{outreachPreview?.daysRemaining !== undefined ? outreachPreview.daysRemaining < 0 ? `${Math.abs(outreachPreview.daysRemaining)} days past completion` : `${outreachPreview.daysRemaining} days remaining` : 'Program timing unavailable'}</strong><small>{outreachPreview?.templateKey.replaceAll('_', ' ') ?? 'Preparing draft…'}</small></span>
+              <em className={outreachPreview?.canSend ? 'ready' : 'blocked'}>{outreachPreview?.canSend ? 'Ready for approval' : 'Setup required'}</em>
+            </div>
+
+            <div className="renewal-outreach-controls">
+              <label>Message purpose<select value={outreachKind} onChange={(event) => changeOutreachDraft(event.target.value as RenewalOutreachKind, outreachChannel)}>
+                <option value="feedback_request">Request feedback</option>
+                <option value="renewal_invitation">Start renewal conversation</option>
+                <option value="no_response_follow_up">No-response follow-up</option>
+              </select></label>
+              <label>Channel<select value={outreachChannel} onChange={(event) => changeOutreachDraft(outreachKind, event.target.value as 'sms' | 'email')}>
+                <option value="email">Email</option>
+                <option value="sms">SMS</option>
+              </select></label>
+            </div>
+
+            {outreachPreview && <div className={`renewal-outreach-readiness ${outreachPreview.canSend ? 'ready' : 'blocked'}`}>
+              {outreachPreview.canSend ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+              <span><strong>{outreachPreview.to || 'No destination matched'}</strong><small>{outreachPreview.reason}</small></span>
+            </div>}
+
+            {outreachChannel === 'email' && <label>Subject<input value={outreachSubject} onChange={(event) => { setOutreachSubject(event.target.value); setOutreachApproved(false) }} /></label>}
+            <label>Message<textarea value={outreachBody} onChange={(event) => { setOutreachBody(event.target.value); setOutreachApproved(false) }} /></label>
+            <label className="renewal-outreach-approval"><input type="checkbox" checked={outreachApproved} onChange={(event) => setOutreachApproved(event.target.checked)} /><span>I have reviewed this exact message and approve sending it to this client.</span></label>
+            <button className="primary-button renewal-send-button" disabled={!outreachPreview?.canSend || !outreachApproved || busy.startsWith('send-outreach')}>
+              {outreachChannel === 'email' ? <Mail size={14} /> : <Smartphone size={14} />}
+              {busy.startsWith('send-outreach') ? 'Sending…' : `Approve and send ${outreachChannel.toUpperCase()}`}
+            </button>
+          </section>
+
+          <aside className="renewal-outreach-history">
+            <div><MessageSquareText size={16} /><span><strong>Communication history</strong><small>Evidence for the assisted pilot and future automation.</small></span></div>
+            {outreachPreview?.history.length ? <div className="renewal-outreach-events">{outreachPreview.history.map((activity) => <article key={activity.id} className={activity.direction}>
+              <span>{activity.direction === 'inbound' ? <MessageSquareText size={12} /> : <Send size={12} />}</span>
+              <div><strong>{activity.direction === 'inbound' ? 'Client reply' : activity.kind.replaceAll('_', ' ')}</strong><small>{new Date(activity.createdAt).toLocaleString('en-GB')} · {activity.channel.toUpperCase()} · {activity.deliveryStatus}</small><p>{activity.body}</p></div>
+            </article>)}</div> : <div className="renewal-outreach-empty"><MessageSquareQuote size={22} /><strong>No renewal messages yet</strong><span>The first approved message will start this client’s communication timeline.</span></div>}
+          </aside>
         </div>
-
-        <div className="clickup-date-explainer">
-          <CalendarClock size={17} />
-          <span><strong>{clickUpPreview.completedWebinarDates} completed webinar dates</strong><small>{clickUpPreview.futureWebinarDates} future webinar dates will be treated as scheduled, not completed.</small></span>
-        </div>
-
-        {clickUpPreview.issues.length > 0 && <div className="clickup-import-issues">
-          <strong><AlertTriangle size={15} /> {clickUpPreview.issues.length} import note{clickUpPreview.issues.length === 1 ? '' : 's'}</strong>
-          {clickUpPreview.issues.slice(0, 5).map((issue) => <span key={issue}>{issue}</span>)}
-        </div>}
-
-        <div className="clickup-preview-table">
-          <div><strong>Client</strong><strong>Completed</strong><strong>Next webinar</strong></div>
-          {clickUpPreview.rows.slice(0, 6).map((row) => <div key={row.clickUpTaskId}>
-            <span><strong>{row.name}</strong><small>{row.email || 'No email'}</small></span>
-            <span>{row.webinarsHosted}</span>
-            <span>{formatDate(row.nextWebinarAt)}</span>
-          </div>)}
-          {clickUpPreview.rows.length > 6 && <small className="clickup-more-rows">Plus {clickUpPreview.rows.length - 6} more clients</small>}
-        </div>
-
-        <div className="renewal-editor-actions">
-          <button className="ghost-button" disabled={busy === 'clickup-import'} onClick={() => setClickUpPreview(null)}>Cancel</button>
-          <button className="primary-button" disabled={busy === 'clickup-import'} onClick={() => void importClickUp()}>
-            {busy === 'clickup-import' ? <><RefreshCw className="spin" size={15} /> Importing…</> : <><FileUp size={15} /> Confirm ClickUp import</>}
-          </button>
-        </div>
-      </section>
+      </form>
     </div>}
+
   </section>
 }

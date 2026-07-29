@@ -3,7 +3,7 @@ import { AlertTriangle, AudioLines, CalendarDays, CheckCircle2, CreditCard, Data
 import type { ImportWorkspace } from './csvEngine'
 import type { IntegrationSnapshot as Snapshot, ProviderId, ProviderStatus as Status } from './integrationTypes'
 
-const providerIcons = { highlevel: Database, 'google-calendar': CalendarDays, stripe: CreditCard, whop: CreditCard, fanbasis: CreditCard, fathom: AudioLines }
+const providerIcons = { clickup: Database, highlevel: Database, 'google-calendar': CalendarDays, stripe: CreditCard, whop: CreditCard, fanbasis: CreditCard, fathom: AudioLines }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { ...init, headers: { 'Content-Type': 'application/json', ...init?.headers } })
@@ -12,15 +12,25 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return body
 }
 
-export default function IntegrationPage({ onWorkspace, canManage = true, canSync = true }: { onWorkspace: (workspace: ImportWorkspace) => void; canManage?: boolean; canSync?: boolean }) {
+type IntegrationPageProps = {
+  onWorkspace: (workspace: ImportWorkspace) => void
+  canManage?: boolean
+  canSync?: boolean
+  allowedProviders?: ProviderId[]
+  showSandbox?: boolean
+  heading?: { eyebrow: string; title: string; description: string }
+}
+
+export default function IntegrationPage({ onWorkspace, canManage = true, canSync = true, allowedProviders, showSandbox = true, heading }: IntegrationPageProps) {
   const [snapshot, setSnapshot] = useState<Snapshot>({ workspace: {}, calls: [], statuses: [] })
   const [selected, setSelected] = useState<Status | null>(null)
   const [form, setForm] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState<string | null>('loading')
   const [error, setError] = useState('')
 
-  const connected = snapshot.statuses.filter((status) => status.connected).length
-  const totalRecords = useMemo(() => snapshot.statuses.reduce((sum, status) => sum + Object.values(status.recordCounts).reduce((count, value) => count + value, 0), 0), [snapshot.statuses])
+  const visibleStatuses = useMemo(() => allowedProviders ? snapshot.statuses.filter((status) => allowedProviders.includes(status.id)) : snapshot.statuses, [allowedProviders, snapshot.statuses])
+  const connected = visibleStatuses.filter((status) => status.connected).length
+  const totalRecords = useMemo(() => visibleStatuses.reduce((sum, status) => sum + Object.values(status.recordCounts).reduce((count, value) => count + value, 0), 0), [visibleStatuses])
 
   const refresh = async () => {
     setBusy('loading'); setError('')
@@ -53,6 +63,7 @@ export default function IntegrationPage({ onWorkspace, canManage = true, canSync
         : selected.id === 'whop' ? { apiKey: form.apiKey, companyId: form.companyId, sandbox: form.environment === 'sandbox' }
           : selected.id === 'fanbasis' ? { webhookSecret: form.webhookSecret, accountLabel: form.accountLabel }
         : selected.id === 'highlevel' ? { accessToken: form.accessToken, locationId: form.locationId }
+          : selected.id === 'clickup' ? { apiToken: form.apiToken, listId: form.listId }
           : { apiKey: form.apiKey }
       applySnapshot(await api<Snapshot>(`/api/integrations/${selected.id}/connect`, { method: 'POST', body: JSON.stringify(payload) }))
       setSelected(null); setForm({})
@@ -97,27 +108,28 @@ export default function IntegrationPage({ onWorkspace, canManage = true, canSync
   }
 
   return <section className="integrations-page">
-    <div className="page-heading integrations-heading"><div><p>Continuous monitoring</p><h1>Connect your revenue stack.</h1><span>{canManage ? 'Connected records are normalised into one analysis layer. Credentials are encrypted at rest.' : canSync ? 'You can refresh connected sources, but only admins can add or remove credentials.' : 'This is a read-only view of the connected sources behind this workspace.'}</span></div><div className="integration-heading-actions">{connected > 1 && canSync && <button disabled={Boolean(busy)} onClick={syncAll}><RefreshCw size={14} className={busy === 'sync-all' ? 'spin' : ''} /> Sync all</button>}<div className="integration-summary"><strong>{connected}/{snapshot.statuses.length || 6}</strong><span>sources connected</span><em>{totalRecords} records synced</em></div></div></div>
+    <div className="page-heading integrations-heading"><div><p>{heading?.eyebrow ?? 'Continuous monitoring'}</p><h1>{heading?.title ?? 'Connect your revenue stack.'}</h1><span>{heading?.description ?? (canManage ? 'Connected records are normalised into one analysis layer. Credentials are encrypted at rest.' : canSync ? 'You can refresh connected sources, but only admins can add or remove credentials.' : 'This is a read-only view of the connected sources behind this workspace.')}</span></div><div className="integration-heading-actions">{connected > 1 && canSync && <button disabled={Boolean(busy)} onClick={syncAll}><RefreshCw size={14} className={busy === 'sync-all' ? 'spin' : ''} /> Sync all</button>}<div className="integration-summary"><strong>{connected}/{visibleStatuses.length || allowedProviders?.length || 0}</strong><span>sources connected</span><em>{totalRecords} records synced</em></div></div></div>
     {error && !selected && <div className="integration-error"><AlertTriangle size={17} /><span>{error}</span><button onClick={() => setError('')}><X size={15} /></button></div>}
     {busy === 'loading' && !snapshot.statuses.length ? <div className="integration-loading"><RefreshCw size={22} className="spin" /><span>Checking integration service…</span></div> : <div className="integration-grid">
-      {snapshot.statuses.map((status) => {
+      {visibleStatuses.map((status) => {
         const Icon = providerIcons[status.id]
         const recordCount = Object.values(status.recordCounts).reduce((sum, value) => sum + value, 0)
         return <article className={`integration-card ${status.connected ? 'connected' : ''}`} key={status.id}>
           <div className="integration-card-top"><span className="provider-icon"><Icon size={20} /></span><span className={`connection-state ${status.mode === 'sandbox' ? 'sandbox' : status.connected ? 'healthy' : status.available ? 'idle' : 'blocked'}`}>{status.mode === 'sandbox' ? <><FlaskConical size={13} /> Sandbox</> : status.connected ? <><CheckCircle2 size={13} /> Connected</> : status.available ? 'Not connected' : 'Setup required'}</span></div>
           <span className="eyebrow">{status.category}</span><h2>{status.label}</h2><p>{status.description}</p>
           {status.connected ? <div className="connection-detail"><strong>{status.accountLabel ?? status.label}</strong><span>{recordCount} records · {status.lastSyncAt ? `synced ${new Date(status.lastSyncAt).toLocaleString('en-GB')}` : 'not synced yet'}</span>{status.mode === 'sandbox' && <small>Uses realistic sample data. Replace this with a live connection when credentials are available.</small>}{status.lastError && <em>{status.lastError}</em>}</div> : !status.available && <div className="connection-detail blocked"><strong>Connection credentials needed</strong><span>Add a Google OAuth client ID and secret once, then connect Calendar.</span></div>}
-          <div className="integration-actions">{status.connected ? <><button className="sync-button" disabled={Boolean(busy) || !canSync} onClick={() => sync(status.id)}><RefreshCw size={14} className={busy === `sync-${status.id}` || busy === `sandbox-${status.id}` ? 'spin' : ''} /> Sync now</button><button className="disconnect-button" disabled={Boolean(busy) || !canManage} onClick={() => disconnect(status.id)}><Unplug size={14} /> Disconnect</button></> : <><button className="connect-button" disabled={Boolean(busy) || !canManage} onClick={() => { setSelected(status); setForm({}); setError('') }}><Link2 size={14} /> {status.id === 'google-calendar' && !status.available ? 'Configure Google' : `Connect ${status.label}`}</button><button className="sandbox-button" disabled={Boolean(busy) || !canSync} onClick={() => sandboxSync(status.id)}><FlaskConical size={14} /> Sandbox</button></>}</div>
+          <div className="integration-actions">{status.connected ? <><button className="sync-button" disabled={Boolean(busy) || !canSync} onClick={() => sync(status.id)}><RefreshCw size={14} className={busy === `sync-${status.id}` || busy === `sandbox-${status.id}` ? 'spin' : ''} /> Sync now</button><button className="disconnect-button" disabled={Boolean(busy) || !canManage} onClick={() => disconnect(status.id)}><Unplug size={14} /> Disconnect</button></> : <><button className="connect-button" disabled={Boolean(busy) || !canManage} onClick={() => { setSelected(status); setForm({}); setError('') }}><Link2 size={14} /> {status.id === 'google-calendar' && !status.available ? 'Configure Google' : `Connect ${status.label}`}</button>{showSandbox && <button className="sandbox-button" disabled={Boolean(busy) || !canSync} onClick={() => sandboxSync(status.id)}><FlaskConical size={14} /> Sandbox</button>}</>}</div>
         </article>
       })}
     </div>}
-    <article className="integration-security"><ShieldCheck size={20} /><div><strong>Built with a secure boundary</strong><span>Provider secrets never enter browser storage. OAuth requests use state validation, synced data is encrypted on disk, and every connection requests read-only access where the provider supports it.</span></div></article>
+    <article className="integration-security"><ShieldCheck size={20} /><div><strong>Built with a secure boundary</strong><span>Provider secrets never enter browser storage and synced data is encrypted on disk. LeakLine only makes read requests during these pilot syncs; use a dedicated or restricted provider credential wherever the provider offers one.</span></div></article>
 
     {selected && <div className="connection-modal-backdrop" onClick={() => setSelected(null)}><section className="connection-modal" onClick={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setSelected(null)}><X size={18} /></button><span className="eyebrow">Connect {selected.category}</span><h2>{selected.label}</h2><p>{selected.id === 'google-calendar' ? selected.available ? 'You will be redirected to Google to grant read-only Calendar access.' : 'First add the OAuth client from Google Cloud. Use http://localhost:8797/api/integrations/google-calendar/callback as the redirect URI.' : 'Your credential is validated before it is encrypted and saved.'}</p>{error && <div className="modal-error"><AlertTriangle size={15} /><span>{error}</span></div>}
       {selected.id === 'stripe' && <label>Restricted or secret API key<input type="password" autoComplete="off" placeholder="rk_test_… or sk_test_…" value={form.secretKey ?? ''} onChange={(event) => setForm({ ...form, secretKey: event.target.value })} /><small>Recommended restricted permissions: Charges read and Invoices read.</small></label>}
       {selected.id === 'whop' && <><label>Whop company API key<input type="password" autoComplete="off" placeholder="Whop API key" value={form.apiKey ?? ''} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} /></label><label>Company ID<input placeholder="biz_…" value={form.companyId ?? ''} onChange={(event) => setForm({ ...form, companyId: event.target.value })} /></label><label>Environment<select value={form.environment ?? 'production'} onChange={(event) => setForm({ ...form, environment: event.target.value })}><option value="production">Production</option><option value="sandbox">Sandbox account</option></select><small>Whop keeps sandbox and production keys separate.</small></label></>}
       {selected.id === 'fanbasis' && <><label>Account label<input placeholder="Your FanBasis account" value={form.accountLabel ?? ''} onChange={(event) => setForm({ ...form, accountLabel: event.target.value })} /></label><label>Recovery bridge secret<input type="password" autoComplete="off" placeholder="At least 24 characters" value={form.webhookSecret ?? ''} onChange={(event) => setForm({ ...form, webhookSecret: event.target.value })} /><small>The bridge sends a SHA-256 HMAC of the raw body in the x-leakline-signature header.</small></label><div className="connection-detail blocked"><strong>Provider adapter</strong><span>FanBasis merchant API docs require account access. The signed bridge accepts normalised payment events now without guessing at a private API.</span></div></>}
       {selected.id === 'highlevel' && <><label>Private integration token<input type="password" autoComplete="off" placeholder="GoHighLevel token" value={form.accessToken ?? ''} onChange={(event) => setForm({ ...form, accessToken: event.target.value })} /></label><label>Location ID<input placeholder="Sub-account location ID" value={form.locationId ?? ''} onChange={(event) => setForm({ ...form, locationId: event.target.value })} /></label></>}
+      {selected.id === 'clickup' && <><label>Personal API token<input type="password" autoComplete="off" placeholder="pk_…" value={form.apiToken ?? ''} onChange={(event) => setForm({ ...form, apiToken: event.target.value })} /><small>For this pilot, generate the token under ClickUp Settings → Apps. LeakLine stores it encrypted.</small></label><label>Client Manager List ID<input placeholder="List ID from the ClickUp List URL" value={form.listId ?? ''} onChange={(event) => setForm({ ...form, listId: event.target.value })} /><small>Copy the List link in ClickUp; the List ID appears after /li/.</small></label></>}
       {selected.id === 'google-calendar' && !selected.available && <><label>Google OAuth client ID<input autoComplete="off" placeholder="1234567890-abc.apps.googleusercontent.com" value={form.clientId ?? ''} onChange={(event) => setForm({ ...form, clientId: event.target.value })} /></label><label>Google OAuth client secret<input type="password" autoComplete="off" placeholder="GOCSPX-…" value={form.clientSecret ?? ''} onChange={(event) => setForm({ ...form, clientSecret: event.target.value })} /><small>Stored encrypted in the local Leakline backend, not in browser storage.</small></label></>}
       {selected.id === 'fathom' && <label>Fathom API key<input type="password" autoComplete="off" placeholder="Fathom API key" value={form.apiKey ?? ''} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} /><small>Create this under Fathom User Settings → API Access.</small></label>}
       <button className="primary-button" disabled={Boolean(busy)} onClick={connect}>{busy === `connect-${selected.id}` ? <><RefreshCw size={15} className="spin" /> Validating…</> : <><Link2 size={15} /> {selected.id === 'google-calendar' && !selected.available ? 'Save and open Google' : 'Continue securely'}</>}</button>

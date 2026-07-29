@@ -121,7 +121,7 @@ function normaliseState(input: Partial<StoreState>): StoreState {
     })),
     recoveryPolicy: normaliseRecoveryPolicy(workspace.recoveryPolicy, workspace.clientName || workspace.name),
     pilotValidation: { ...defaultPilotValidation(), ...(workspace.pilotValidation ?? {}) },
-    renewalClients: (workspace.renewalClients ?? []).map((client) => ({ ...client, renewalStatus: normaliseRenewalStatus(client.renewalStatus) })),
+    renewalClients: (workspace.renewalClients ?? []).map((client) => ({ ...client, renewalStatus: normaliseRenewalStatus(client.renewalStatus), outreach: client.outreach ?? [] })),
     clickUpRenewalImport: workspace.clickUpRenewalImport,
     kpiSnapshots: workspace.kpiSnapshots ?? [],
   }))

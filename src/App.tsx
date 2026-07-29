@@ -38,6 +38,8 @@ import PaymentRecoveryPage from './PaymentRecoveryPage'
 import RenewalCommandPage from './RenewalCommandPage'
 import KpiTrackingPage from './KpiTrackingPage'
 import { isRenewalPilotClient } from './workspaceMode'
+import RenewalDataSourcesPage from './RenewalDataSourcesPage'
+import logoMark from './assets/leakline-mark.svg'
 
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 const workspaceStorageKey = 'leakline-v1-workspace'
@@ -552,7 +554,7 @@ function LeakRow({ leak, onOpen, reviewed = false, recoveryCase }: { leak: Leak;
   )
 }
 
-function PaymentLedger({ workspace, demoMode = false }: { workspace: ImportWorkspace; demoMode?: boolean }) {
+function PaymentLedger({ workspace, demoMode = false, renewalMode = false }: { workspace: ImportWorkspace; demoMode?: boolean; renewalMode?: boolean }) {
   const hasImportedWorkspace = Object.keys(workspace).length > 0
   const importedPayments = workspace.payments?.rows
   const rows = importedPayments?.map((row, index) => ({
@@ -562,20 +564,22 @@ function PaymentLedger({ workspace, demoMode = false }: { workspace: ImportWorks
     amount: typeof row.amount === 'number' ? row.amount : 0,
     date: paymentDate(row),
     state: paymentState(row),
+    provider: String(row.payment_provider ?? 'Imported'),
   })) ?? (demoMode && !hasImportedWorkspace ? paymentEvents.map((event, index) => ({ ...event, key: `${event.customer}-${index}`, state: event.status as PaymentState })) : [])
   const confirmedLost = rows.filter((row) => row.state === 'Confirmed lost').reduce((sum, row) => sum + row.amount, 0)
   const atRisk = rows.filter((row) => row.state === 'At risk').reduce((sum, row) => sum + row.amount, 0)
+  const collected = rows.filter((row) => row.state === 'Paid').reduce((sum, row) => sum + row.amount, 0)
 
   return <article className="panel full-panel">
     <div className="panel-head">
-      <div><span className="eyebrow">{importedPayments ? `${rows.length} payment records` : 'Payment evidence'}</span><h2>Payment recovery ledger</h2></div>
-      <div className="ledger-totals"><span className="confirmed-total">{money.format(confirmedLost)} confirmed lost</span><span className="risk-total">{money.format(atRisk)} at risk</span></div>
+      <div><span className="eyebrow">{importedPayments ? `${rows.length} payment records` : 'Payment evidence'}</span><h2>{renewalMode ? 'Renewal payment ledger' : 'Payment recovery ledger'}</h2>{renewalMode && <p>Use the customer identity and provider status to verify renewal cash against Renewal Command. Automatic renewal attribution comes after the live payment fields are confirmed.</p>}</div>
+      <div className="ledger-totals">{renewalMode ? <><span className="risk-total">{money.format(collected)} collected</span><span className="confirmed-total">{money.format(confirmedLost)} refunded or lost</span></> : <><span className="confirmed-total">{money.format(confirmedLost)} confirmed lost</span><span className="risk-total">{money.format(atRisk)} at risk</span></>}</div>
     </div>
     {rows.length ? <div className="ledger-table">{rows.map((event) => <div key={event.key}>
       <span className={`ledger-status ${event.state === 'Confirmed lost' ? 'lost' : event.state === 'At risk' ? 'risk' : event.state.toLowerCase()}`} />
-      <section><strong>{event.customer}</strong><small>{event.event}</small></section>
+      <section><strong>{event.customer}</strong><small>{event.event}{'provider' in event ? ` · ${event.provider}` : ''}</small></section>
       <span>{event.date}</span><b>{money.format(event.amount)}</b><em>{event.state}</em>
-    </div>)}</div> : <div className="empty-alerts"><FileUp size={24} /><h3>No payment evidence connected</h3><p>Connect or import payments so LeakLine can detect recoverable balances and confirmed losses.</p></div>}
+    </div>)}</div> : <div className="empty-alerts"><FileUp size={24} /><h3>No payment evidence connected</h3><p>{renewalMode ? 'Connect Whop from Data Sources to bring renewal payment evidence into this ledger.' : 'Connect or import payments so LeakLine can detect recoverable balances and confirmed losses.'}</p></div>}
   </article>
 }
 
@@ -591,7 +595,7 @@ function CloserHealthTable({ rows }: { rows: CloserHealthRow[] }) {
   </table></div>
 }
 
-function SectionPage({ section, onOpenLeak, alertData = [], workspace = {}, funnelData = [], closerData = [], recoveryData = [], healthData = [], demoMode = false, onResolveRecovery, reviewedLeaks = new Set<number>(), recoveryCases = [], canAct = true }: { section: string; onOpenLeak: (leak: Leak) => void; alertData?: Leak[]; workspace?: ImportWorkspace; funnelData?: FunnelStage[]; closerData?: CloserHealthRow[]; recoveryData?: RecoveryItem[]; healthData?: DataHealthItem[]; demoMode?: boolean; onResolveRecovery?: (item: RecoveryItem) => void; reviewedLeaks?: Set<number>; recoveryCases?: RecoveryCase[]; canAct?: boolean }) {
+function SectionPage({ section, onOpenLeak, alertData = [], workspace = {}, funnelData = [], closerData = [], recoveryData = [], healthData = [], demoMode = false, onResolveRecovery, reviewedLeaks = new Set<number>(), recoveryCases = [], canAct = true, renewalMode = false }: { section: string; onOpenLeak: (leak: Leak) => void; alertData?: Leak[]; workspace?: ImportWorkspace; funnelData?: FunnelStage[]; closerData?: CloserHealthRow[]; recoveryData?: RecoveryItem[]; healthData?: DataHealthItem[]; demoMode?: boolean; onResolveRecovery?: (item: RecoveryItem) => void; reviewedLeaks?: Set<number>; recoveryCases?: RecoveryCase[]; canAct?: boolean; renewalMode?: boolean }) {
   const copy: Record<string, [string, string]> = {
     'Leak feed': ['Leak feed', 'Detected revenue issues ranked by financial impact, with the records and actions needed to address them.'],
     Funnel: ['Funnel analysis', 'Locate the largest stage drop-offs, understand the likely cause and choose the next corrective test.'],
@@ -601,7 +605,9 @@ function SectionPage({ section, onOpenLeak, alertData = [], workspace = {}, funn
     'Data health': ['Data confidence', 'See whether LeakLine has enough complete, recent and correctly matched data to trust its findings.'],
     Settings: ['Detection rules', 'Control detection windows, minimum samples, thresholds and recovery ownership.'],
   }
-  const [title, subtitle] = copy[section] ?? [section, 'Leak detection and recovery workspace']
+  const [title, subtitle] = section === 'Payments' && renewalMode
+    ? ['Payments', 'Review Whop and imported payment evidence when a client renews.']
+    : copy[section] ?? [section, 'Leak detection and recovery workspace']
   const largestDrop = funnelData.slice(1).map((stage, index) => ({
     label: `${funnelData[index].label} → ${stage.label.toLowerCase()}`,
     records: Math.max(0, funnelData[index].value - stage.value),
@@ -648,7 +654,7 @@ function SectionPage({ section, onOpenLeak, alertData = [], workspace = {}, funn
     </div>}
     {section === 'Recovery' && <article className="panel full-panel"><div className="panel-head"><div><span className="eyebrow">{money.format(recoveryData.reduce((sum, item) => sum + item.value, 0))} potentially recoverable</span><h2>Open opportunities and payments</h2></div></div>{recoveryData.length ? <div className="recovery-board">{recoveryData.map((item) => <div key={recoveryItemKey(item)}><span className={`priority ${item.priority.toLowerCase()}`} /><section><strong>{item.prospect}</strong><small>{item.reason} · {item.inactive} days inactive</small><em>Owner: {item.owner}</em></section><b>{money.format(item.value)}</b><button className="resolve-button" disabled={!canAct} title={canAct ? 'Record this recovery item as resolved' : 'Viewer role is read-only'} onClick={() => canAct && onResolveRecovery?.(item)}><CheckCircle2 size={14} /><span>{canAct ? 'Record outcome' : 'Read only'}</span></button></div>)}</div> : <div className="empty-alerts"><CheckCircle2 size={24} /><h3>Nothing currently needs recovery</h3><p>No stale opportunities or at-risk payments were found in this period.</p></div>}</article>}
     {section === 'Team' && <article className="panel full-panel"><div className="panel-head"><div><span className="eyebrow">{demoMode ? 'Sample closer data' : hasWorkspaceData ? 'Imported closer data' : 'No closer data'}</span><h2>Conversion and retention signals</h2></div></div><CloserHealthTable rows={closerData} /></article>}
-    {section === 'Payments' && <PaymentLedger workspace={workspace} demoMode={demoMode} />}
+    {section === 'Payments' && <PaymentLedger workspace={workspace} demoMode={demoMode} renewalMode={renewalMode} />}
     {section === 'Data health' && <div className="health-grid">{healthData.map((source) => <article className="panel" key={source.source}>{source.status === 'Healthy' ? <CheckCircle2 size={20} className="healthy-icon" /> : <AlertTriangle size={20} className="review-icon" />}<div><span className="eyebrow">{source.status === 'Healthy' ? 'Detection ready' : 'Evidence gap'}</span><h2>{source.source}</h2><p>{source.detail}</p><small>{source.records}</small></div></article>)}</div>}
     {section === 'Settings' && <article className="panel settings-panel"><div><span className="eyebrow">Detection confidence</span><h2>Revenue maturity window</h2><p>Wait 14 days before LeakLine treats retained-revenue results as mature.</p></div><button>14 days <ChevronDown size={14} /></button><div><span className="eyebrow">Leak threshold</span><h2>Minimum sample size</h2><p>Only detect a closer-performance gap after 10 qualified calls.</p></div><button>10 calls <ChevronDown size={14} /></button></article>}
   </section>
@@ -1069,16 +1075,17 @@ export default function App({ user, onLogout }: AppProps) {
   })), [activeLeaks])
   const detectedCasesKey = JSON.stringify(detectedCasesPayload)
 
-  const navItems = [
-    isRenewalPilot
-      ? { label: 'Renewal command', display: 'Renewal Command', icon: CalendarDays }
-      : { label: 'Payment recovery', display: 'Revenue Recovery', icon: CircleDollarSign },
-    ...(isRenewalPilot ? [{ label: 'KPI tracking', display: 'KPI Tracking', icon: BarChart3 }] : []),
+  const navItems = isRenewalPilot ? [
+    { label: 'Renewal command', display: 'Renewal Command', icon: CalendarDays },
+    { label: 'KPI tracking', display: 'KPI Tracking', icon: BarChart3 },
+    { label: 'Payments', display: 'Payments', icon: CircleDollarSign },
+  ] : [
+    { label: 'Payment recovery', display: 'Revenue Recovery', icon: CircleDollarSign },
     { label: 'Leak feed', display: 'Leak feed', icon: AlertTriangle, badge: openLeaks.length },
     { label: 'Leak command', display: 'Leak command', icon: Target },
     { label: 'Recovery', display: 'Pipeline follow-up', icon: Target, badge: displayRecovery.length },
   ]
-  const supportingNavItems = [
+  const supportingNavItems = isRenewalPilot ? [] : [
     { label: 'Funnel', display: 'Funnel analysis', icon: Activity },
     { label: 'Team', display: 'Closer signals', icon: Users },
     { label: 'Calls', display: 'Calls', icon: AudioLines },
@@ -1174,6 +1181,10 @@ export default function App({ user, onLogout }: AppProps) {
   useEffect(() => {
     if (searchOpen) searchInputRef.current?.focus()
   }, [searchOpen])
+
+  useEffect(() => {
+    setActiveNav(isRenewalPilot ? 'Renewal command' : 'Payment recovery')
+  }, [isRenewalPilot, user.workspaceId])
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).has('integration')) {
@@ -1317,7 +1328,10 @@ export default function App({ user, onLogout }: AppProps) {
   return (
     <div className="app-shell">
       <aside className={`sidebar ${mobileNav ? 'open' : ''}`}>
-        <div className="brand"><span className="brand-mark"><ShieldCheck size={20} /></span><span>LEAKLINE</span></div>
+        <div className="brand" aria-label="LeakLine">
+          <img className="brand-logo" src={logoMark} alt="" />
+          <span>LeakLine</span>
+        </div>
         <button className="close-nav" onClick={() => setMobileNav(false)}><X size={20} /></button>
         <div className="workspace-switcher" ref={workspaceMenuRef}>
           <button className={`workspace-card ${workspaceMenuOpen ? 'open' : ''}`} type="button" aria-haspopup="menu" aria-expanded={workspaceMenuOpen} onClick={() => setWorkspaceMenuOpen((open) => !open)}>
@@ -1332,10 +1346,10 @@ export default function App({ user, onLogout }: AppProps) {
               <span><strong>{workspace.clientName}</strong><small>{workspace.recordCount} stored records{workspace.id === user.workspaceId ? ' · active' : ''}</small></span>
               {workspace.id === user.workspaceId && <CheckCircle2 size={15} />}
             </button>)}
-            {userCanEditData && <button role="menuitem" onClick={() => openWorkspacePage(dataEntryNav)}><FileUp size={14} /><span>Connect or import data</span></button>}
-            <button role="menuitem" onClick={() => openWorkspacePage('Data health')}><ShieldCheck size={14} /><span>Review detection coverage</span></button>
+            {userCanEditData && <button role="menuitem" onClick={() => openWorkspacePage(isRenewalPilot ? 'Data sources' : dataEntryNav)}><FileUp size={14} /><span>{isRenewalPilot ? 'Manage renewal data' : 'Connect or import data'}</span></button>}
+            {!isRenewalPilot && <button role="menuitem" onClick={() => openWorkspacePage('Data health')}><ShieldCheck size={14} /><span>Review detection coverage</span></button>}
             {userCanAdminister && <button role="menuitem" onClick={() => openWorkspacePage('Admin')}><UserCog size={14} /><span>Manage users</span></button>}
-            <div className="workspace-menu-note">Each workspace keeps its own detection sources, leak evidence and recovery cases separate.</div>
+            <div className="workspace-menu-note">{isRenewalPilot ? 'Renewal clients, KPI periods and payment records remain isolated inside this client workspace.' : 'Each workspace keeps its own detection sources, leak evidence and recovery cases separate.'}</div>
           </div>}
         </div>
         <nav>
@@ -1345,15 +1359,14 @@ export default function App({ user, onLogout }: AppProps) {
               <Icon size={18} /><span>{display}</span>{badge && <em>{badge}</em>}
             </button>
           ))}
-          <p>Analysis</p>
-          {supportingNavItems.map(({ label, display, icon: Icon }) => <button key={label} className={activeNav === label ? 'active' : ''} onClick={() => openWorkspacePage(label)}><Icon size={18} /><span>{display}</span></button>)}
+          {supportingNavItems.length > 0 && <><p>Analysis</p>{supportingNavItems.map(({ label, display, icon: Icon }) => <button key={label} className={activeNav === label ? 'active' : ''} onClick={() => openWorkspacePage(label)}><Icon size={18} /><span>{display}</span></button>)}</>}
           <p>Manage</p>
-          {userCanEditData && <button className={activeNav === dataEntryNav || activeNav === 'Integrations' ? 'active' : ''} onClick={() => openWorkspacePage(dataEntryNav)}><Gauge size={18} /><span>Data sources</span></button>}
-          <button className={activeNav === 'Data health' ? 'active' : ''} onClick={() => openWorkspacePage('Data health')}><ShieldCheck size={18} /><span>Data confidence</span></button>
+          {userCanEditData && <button className={activeNav === (isRenewalPilot ? 'Data sources' : dataEntryNav) || activeNav === 'Integrations' ? 'active' : ''} onClick={() => openWorkspacePage(isRenewalPilot ? 'Data sources' : dataEntryNav)}><Gauge size={18} /><span>Data sources</span></button>}
+          {!isRenewalPilot && <button className={activeNav === 'Data health' ? 'active' : ''} onClick={() => openWorkspacePage('Data health')}><ShieldCheck size={18} /><span>Data confidence</span></button>}
           {userCanAdminister && <button className={activeNav === 'Admin' ? 'active' : ''} onClick={() => openWorkspacePage('Admin')}><UserCog size={18} /><span>Admin</span></button>}
         </nav>
         <div className="sidebar-bottom">
-          <button className={activeNav === 'Settings' ? 'active' : ''} onClick={() => openWorkspacePage('Settings')}><Settings size={18} /><span>Detection rules</span></button>
+          {!isRenewalPilot && <button className={activeNav === 'Settings' ? 'active' : ''} onClick={() => openWorkspacePage('Settings')}><Settings size={18} /><span>Detection rules</span></button>}
           <button className="profile" onClick={onLogout} title="Sign out of Leakline"><span>{initials(user.name || user.email)}</span><div><strong>{user.name || user.email}</strong><small>{roleLabels[user.role]} · {user.email}</small></div><ChevronDown size={15} /></button>
         </div>
       </aside>
@@ -1361,7 +1374,7 @@ export default function App({ user, onLogout }: AppProps) {
       <main>
         <header>
           <button className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={21} /></button>
-          {activeNav === 'Renewal command' ? <div className="renewal-header-context"><CalendarDays size={18} /><span><strong>Recurring revenue workspace</strong><small>Program activity, feedback and renewal actions</small></span></div> : activeNav === 'KPI tracking' ? <div className="renewal-header-context"><BarChart3 size={18} /><span><strong>Sales performance workspace</strong><small>Core totals, conversion and cash efficiency</small></span></div> : <div className={`search ${searchOpen ? 'open' : ''}`} onClick={() => { setSearchOpen(true); setNotificationsOpen(false); setPeriodMenuOpen(false) }}>
+          {activeNav === 'Renewal command' ? <div className="renewal-header-context"><CalendarDays size={18} /><span><strong>Recurring revenue workspace</strong><small>Program activity, feedback and renewal actions</small></span></div> : activeNav === 'KPI tracking' ? <div className="renewal-header-context"><BarChart3 size={18} /><span><strong>Sales performance workspace</strong><small>Core totals, conversion and cash efficiency</small></span></div> : isRenewalPilot && activeNav === 'Payments' ? <div className="renewal-header-context"><CircleDollarSign size={18} /><span><strong>Renewal payments</strong><small>Payment evidence and collected cash</small></span></div> : isRenewalPilot && activeNav === 'Data sources' ? <div className="renewal-header-context"><Gauge size={18} /><span><strong>Renewal data sources</strong><small>Live connections and manual sheet uploads</small></span></div> : isRenewalPilot && activeNav === 'Admin' ? <div className="renewal-header-context"><UserCog size={18} /><span><strong>Workspace administration</strong><small>Users, roles and client access</small></span></div> : <div className={`search ${searchOpen ? 'open' : ''}`} onClick={() => { setSearchOpen(true); setNotificationsOpen(false); setPeriodMenuOpen(false) }}>
             <Search size={17} />
             <input ref={searchInputRef} aria-label="Search leaks, recovery cases or records" placeholder="Search leaks, cases or records" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onFocus={() => setSearchOpen(true)} />
             <kbd>⌘ K</kbd>
@@ -1370,7 +1383,7 @@ export default function App({ user, onLogout }: AppProps) {
               {searchResults.length ? searchResults.map((item) => <button key={item.key} onClick={() => openSearchItem(item)}><Search size={14} /><span><strong>{item.label}</strong><small>{item.meta}</small></span><ArrowRight size={14} /></button>) : <div className="popover-empty">No matching records</div>}
             </div>}
           </div>}
-          {activeNav !== 'Renewal command' && activeNav !== 'KPI tracking' && <><div className="header-control">
+          {!isRenewalPilot && activeNav !== 'Renewal command' && activeNav !== 'KPI tracking' && <><div className="header-control">
             <button className="icon-button" aria-label="Leak alerts" onClick={() => { setNotificationsOpen((open) => !open); setSearchOpen(false); setPeriodMenuOpen(false) }}><Bell size={19} />{unreadAlerts.length > 0 && <i />}</button>
             {notificationsOpen && <div className="header-popover notification-popover">
               <div className="popover-head"><span><strong>Leak alerts</strong><small>{unreadAlerts.length} need acknowledgement</small></span>{unreadAlerts.length > 0 && userCanEditData && <button onClick={markAllAlertsReviewed}>Acknowledge all</button>}</div>
@@ -1384,7 +1397,7 @@ export default function App({ user, onLogout }: AppProps) {
         </header>
 
         <div className="content">
-          {activeNav === 'Renewal command' ? <RenewalCommandPage canAct={userCanEditData} workspaceId={user.workspaceId} /> : activeNav === 'KPI tracking' ? <KpiTrackingPage canAct={userCanEditData} workspaceId={user.workspaceId} /> : activeNav === 'Payment recovery' ? <PaymentRecoveryPage canAct={userCanEditData} workspaceId={user.workspaceId} /> : activeNav === dataEntryNav && userCanEditData ? <ImportPage initialWorkspace={importedWorkspace} onOpenIntegrations={() => setActiveNav('Integrations')} onSandboxSnapshot={applyIntegrationSnapshot} onApply={async (workspace, _alerts, sourceMode) => { if (sourceMode === 'exports') { setIntegrationStatuses([]); setSyncedCalls(0) } await applyImportedWorkspace(workspace); setActiveNav('Leak command') }} onClear={async () => { await importWorkspaceRequest('/api/imports', { method: 'DELETE' }); clearSavedWorkspace(user.workspaceId); clearResolvedRecovery(user.workspaceId); clearReviewedLeaks(user.workspaceId); setStoredImportWorkspace({}); setResolvedRecovery(new Set()); setReviewedLeaks(new Set()) }} /> : activeNav === 'Integrations' && userCanEditData ? <IntegrationPage onWorkspace={setLiveWorkspace} canManage={userCanManageIntegrations} canSync={userCanEditData} /> : activeNav === 'Calls' ? <CallsPage workspaceId={user.workspaceId} /> : activeNav === 'Admin' && userCanAdminister ? <AdminPage currentUser={user} /> : activeNav !== 'Leak command' ? <SectionPage section={activeNav === dataEntryNav || activeNav === 'Integrations' ? 'Data health' : activeNav} onOpenLeak={setSelectedLeak} alertData={activeLeaks} workspace={periodWorkspace} funnelData={displayFunnel} closerData={displayClosers} recoveryData={displayRecovery} healthData={displayHealth} demoMode={isFullDemoWorkspace} onResolveRecovery={resolveRecovery} reviewedLeaks={reviewedLeaks} recoveryCases={recoveryCases} canAct={userCanEditData} /> : <>
+          {activeNav === 'Renewal command' ? <RenewalCommandPage canAct={userCanEditData} workspaceId={user.workspaceId} onOpenDataSources={() => openWorkspacePage('Data sources')} /> : activeNav === 'KPI tracking' ? <KpiTrackingPage canAct={userCanEditData} workspaceId={user.workspaceId} /> : activeNav === 'Data sources' && isRenewalPilot && userCanEditData ? <RenewalDataSourcesPage workspaceId={user.workspaceId} canManage={userCanManageIntegrations} canSync={userCanEditData} onWorkspace={setLiveWorkspace} /> : activeNav === 'Payment recovery' ? <PaymentRecoveryPage canAct={userCanEditData} workspaceId={user.workspaceId} /> : activeNav === dataEntryNav && userCanEditData ? <ImportPage initialWorkspace={importedWorkspace} onOpenIntegrations={() => setActiveNav('Integrations')} onSandboxSnapshot={applyIntegrationSnapshot} onApply={async (workspace, _alerts, sourceMode) => { if (sourceMode === 'exports') { setIntegrationStatuses([]); setSyncedCalls(0) } await applyImportedWorkspace(workspace); setActiveNav('Leak command') }} onClear={async () => { await importWorkspaceRequest('/api/imports', { method: 'DELETE' }); clearSavedWorkspace(user.workspaceId); clearResolvedRecovery(user.workspaceId); clearReviewedLeaks(user.workspaceId); setStoredImportWorkspace({}); setResolvedRecovery(new Set()); setReviewedLeaks(new Set()) }} /> : activeNav === 'Integrations' && userCanEditData ? <IntegrationPage onWorkspace={setLiveWorkspace} canManage={userCanManageIntegrations} canSync={userCanEditData} /> : activeNav === 'Calls' ? <CallsPage workspaceId={user.workspaceId} /> : activeNav === 'Admin' && userCanAdminister ? <AdminPage currentUser={user} /> : activeNav !== 'Leak command' ? <SectionPage section={activeNav === dataEntryNav || activeNav === 'Integrations' ? 'Data health' : activeNav} onOpenLeak={setSelectedLeak} alertData={activeLeaks} workspace={periodWorkspace} funnelData={displayFunnel} closerData={displayClosers} recoveryData={displayRecovery} healthData={displayHealth} demoMode={isFullDemoWorkspace} onResolveRecovery={resolveRecovery} reviewedLeaks={reviewedLeaks} recoveryCases={recoveryCases} canAct={userCanEditData} renewalMode={isRenewalPilot} /> : <>
           <section className="page-heading">
             <div><p>Leak command · {currentWorkspace.clientName}</p><h1>Detect, assign and recover leaking revenue.</h1><span>{isFullDemoWorkspace ? `${openLeaks.length} open recovery case${openLeaks.length === 1 ? '' : 's'} across the full sample funnel in ${reportingPeriodLabel}.` : hasImportedData ? `${openLeaks.length} open recovery case${openLeaks.length === 1 ? '' : 's'} across ${Object.values(periodWorkspace).reduce((sum, item) => sum + item.rows.length, 0)} records in ${reportingPeriodLabel}.` : 'Connect or import client data before LeakLine runs leak detection and supporting analysis.'}</span></div>
             <div className="period-controls">
