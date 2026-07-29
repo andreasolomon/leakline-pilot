@@ -136,6 +136,7 @@ export default function RenewalDataSourcesPage({
     <IntegrationPage
       onWorkspace={onWorkspace}
       canManage={canManage}
+      manageableProviders={canSync ? ['clickup'] : []}
       canSync={canSync}
       allowedProviders={allowedProviders}
       showSandbox={false}
@@ -145,7 +146,7 @@ export default function RenewalDataSourcesPage({
         description: canManage
           ? 'Connect ClickUp, Whop and GoHighLevel. Credentials are validated server-side and encrypted before they are stored.'
           : canSync
-            ? 'Refresh connected systems or upload the latest exports. Only an owner or client admin can change private credentials.'
+            ? 'Connect ClickUp, refresh renewal data or upload the latest exports. A client admin is still required for CRM and payment credentials.'
             : 'Review the connected systems and import history behind this workspace.',
       }}
     />

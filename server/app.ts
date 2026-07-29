@@ -1104,7 +1104,9 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
   app.post('/api/integrations/:provider/connect', async (request, response, next) => {
     try {
       const provider = providerSchema.parse(request.params.provider)
-      auth.requireIntegrationManager(response.locals.user as PublicUser)
+      const actor = response.locals.user as PublicUser
+      if (provider === 'clickup') auth.requireDataEditor(actor)
+      else auth.requireIntegrationManager(actor)
       if (provider === 'google-calendar') return response.status(400).json({ error: 'Use the Google OAuth start endpoint.' })
       const credential = provider === 'stripe'
         ? z.object({ secretKey: z.string().min(20).regex(/^(sk|rk)_(test|live)_/, 'Use a Stripe secret or restricted key.') }).parse(request.body)
@@ -1133,7 +1135,14 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
   })
 
   app.post('/api/integrations/:provider/disconnect', async (request, response, next) => {
-    try { auth.requireIntegrationManager(response.locals.user as PublicUser); await service.disconnect(activeWorkspaceId(response), providerSchema.parse(request.params.provider)); response.json(await service.snapshot(activeWorkspaceId(response))) }
+    try {
+      const provider = providerSchema.parse(request.params.provider)
+      const actor = response.locals.user as PublicUser
+      if (provider === 'clickup') auth.requireDataEditor(actor)
+      else auth.requireIntegrationManager(actor)
+      await service.disconnect(activeWorkspaceId(response), provider)
+      response.json(await service.snapshot(activeWorkspaceId(response)))
+    }
     catch (error) { next(error) }
   })
 

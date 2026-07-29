@@ -15,13 +15,14 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 type IntegrationPageProps = {
   onWorkspace: (workspace: ImportWorkspace) => void
   canManage?: boolean
+  manageableProviders?: ProviderId[]
   canSync?: boolean
   allowedProviders?: ProviderId[]
   showSandbox?: boolean
   heading?: { eyebrow: string; title: string; description: string }
 }
 
-export default function IntegrationPage({ onWorkspace, canManage = true, canSync = true, allowedProviders, showSandbox = true, heading }: IntegrationPageProps) {
+export default function IntegrationPage({ onWorkspace, canManage = true, manageableProviders = [], canSync = true, allowedProviders, showSandbox = true, heading }: IntegrationPageProps) {
   const [snapshot, setSnapshot] = useState<Snapshot>({ workspace: {}, calls: [], statuses: [] })
   const [selected, setSelected] = useState<Status | null>(null)
   const [form, setForm] = useState<Record<string, string>>({})
@@ -31,6 +32,7 @@ export default function IntegrationPage({ onWorkspace, canManage = true, canSync
   const visibleStatuses = useMemo(() => allowedProviders ? snapshot.statuses.filter((status) => allowedProviders.includes(status.id)) : snapshot.statuses, [allowedProviders, snapshot.statuses])
   const connected = visibleStatuses.filter((status) => status.connected).length
   const totalRecords = useMemo(() => visibleStatuses.reduce((sum, status) => sum + Object.values(status.recordCounts).reduce((count, value) => count + value, 0), 0), [visibleStatuses])
+  const canManageProvider = (provider: ProviderId) => canManage || manageableProviders.includes(provider)
 
   const refresh = async () => {
     setBusy('loading'); setError('')
@@ -47,8 +49,8 @@ export default function IntegrationPage({ onWorkspace, canManage = true, canSync
   }
 
   const connect = async () => {
-    if (!canManage) return
     if (!selected) return
+    if (!canManageProvider(selected.id)) return
     setBusy(`connect-${selected.id}`); setError('')
     try {
       if (selected.id === 'google-calendar') {
@@ -99,7 +101,7 @@ export default function IntegrationPage({ onWorkspace, canManage = true, canSync
   }
 
   const disconnect = async (provider: ProviderId) => {
-    if (!canManage) return
+    if (!canManageProvider(provider)) return
     if (!window.confirm('Disconnect this provider and remove its synced records from Leakline?')) return
     setBusy(`disconnect-${provider}`); setError('')
     try { applySnapshot(await api<Snapshot>(`/api/integrations/${provider}/disconnect`, { method: 'POST' })) }
@@ -114,11 +116,12 @@ export default function IntegrationPage({ onWorkspace, canManage = true, canSync
       {visibleStatuses.map((status) => {
         const Icon = providerIcons[status.id]
         const recordCount = Object.values(status.recordCounts).reduce((sum, value) => sum + value, 0)
+        const canManageThisProvider = canManageProvider(status.id)
         return <article className={`integration-card ${status.connected ? 'connected' : ''}`} key={status.id}>
           <div className="integration-card-top"><span className="provider-icon"><Icon size={20} /></span><span className={`connection-state ${status.mode === 'sandbox' ? 'sandbox' : status.connected ? 'healthy' : status.available ? 'idle' : 'blocked'}`}>{status.mode === 'sandbox' ? <><FlaskConical size={13} /> Sandbox</> : status.connected ? <><CheckCircle2 size={13} /> Connected</> : status.available ? 'Not connected' : 'Setup required'}</span></div>
           <span className="eyebrow">{status.category}</span><h2>{status.label}</h2><p>{status.description}</p>
           {status.connected ? <div className="connection-detail"><strong>{status.accountLabel ?? status.label}</strong><span>{recordCount} records · {status.lastSyncAt ? `synced ${new Date(status.lastSyncAt).toLocaleString('en-GB')}` : 'not synced yet'}</span>{status.mode === 'sandbox' && <small>Uses realistic sample data. Replace this with a live connection when credentials are available.</small>}{status.lastError && <em>{status.lastError}</em>}</div> : !status.available && <div className="connection-detail blocked"><strong>Connection credentials needed</strong><span>Add a Google OAuth client ID and secret once, then connect Calendar.</span></div>}
-          <div className="integration-actions">{status.connected ? <><button className="sync-button" disabled={Boolean(busy) || !canSync} onClick={() => sync(status.id)}><RefreshCw size={14} className={busy === `sync-${status.id}` || busy === `sandbox-${status.id}` ? 'spin' : ''} /> Sync now</button><button className="disconnect-button" disabled={Boolean(busy) || !canManage} onClick={() => disconnect(status.id)}><Unplug size={14} /> Disconnect</button></> : <><button className="connect-button" disabled={Boolean(busy) || !canManage} onClick={() => { setSelected(status); setForm({}); setError('') }}><Link2 size={14} /> {status.id === 'google-calendar' && !status.available ? 'Configure Google' : `Connect ${status.label}`}</button>{showSandbox && <button className="sandbox-button" disabled={Boolean(busy) || !canSync} onClick={() => sandboxSync(status.id)}><FlaskConical size={14} /> Sandbox</button>}</>}</div>
+          <div className="integration-actions">{status.connected ? <><button className="sync-button" disabled={Boolean(busy) || !canSync} onClick={() => sync(status.id)}><RefreshCw size={14} className={busy === `sync-${status.id}` || busy === `sandbox-${status.id}` ? 'spin' : ''} /> Sync now</button><button className="disconnect-button" disabled={Boolean(busy) || !canManageThisProvider} onClick={() => disconnect(status.id)}><Unplug size={14} /> Disconnect</button></> : <><button className="connect-button" disabled={Boolean(busy) || !canManageThisProvider} onClick={() => { setSelected(status); setForm({}); setError('') }}><Link2 size={14} /> {status.id === 'google-calendar' && !status.available ? 'Configure Google' : `Connect ${status.label}`}</button>{showSandbox && <button className="sandbox-button" disabled={Boolean(busy) || !canSync} onClick={() => sandboxSync(status.id)}><FlaskConical size={14} /> Sandbox</button>}</>}</div>
         </article>
       })}
     </div>}

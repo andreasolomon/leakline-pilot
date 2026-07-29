@@ -423,6 +423,36 @@ describe('Version 2 service boundary', () => {
     } finally { await rm(directory, { recursive: true, force: true }) }
   })
 
+  it('lets managers connect ClickUp without granting access to other provider credentials', async () => {
+    process.env.LEAKLINE_AUTH_ENABLED = 'true'
+    process.env.LEAKLINE_INVITE_CODE = 'pilot-secret'
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-clickup-manager-'))
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (/\/api\/v2\/list\/list-123$/.test(url)) return reply({ id: 'list-123', name: 'Client Manager' })
+      return reply({})
+    }) as unknown as typeof fetch
+    try {
+      const app = createApp(new EncryptedStore(directory), fetcher)
+      const owner = request.agent(app)
+      await owner.post('/api/auth/signup').send({ name: 'Andrea', email: 'owner@example.com', password: 'secure-pass-123', inviteCode: 'pilot-secret' }).expect(201)
+      await owner.post('/api/admin/users').send({ name: 'Yonas', email: 'yonas@example.com', password: 'manager-pass-123', role: 'manager' }).expect(201)
+      await owner.post('/api/admin/users').send({ name: 'Viewer', email: 'viewer@example.com', password: 'viewer-pass-123', role: 'viewer' }).expect(201)
+
+      const manager = request.agent(app)
+      await manager.post('/api/auth/login').send({ email: 'yonas@example.com', password: 'manager-pass-123' }).expect(200)
+      await manager.post('/api/integrations/clickup/connect').send({ apiToken: 'pk_12345678901234567890', listId: 'list-123' }).expect(200)
+      await manager.post('/api/integrations/clickup/disconnect').expect(200)
+      await manager.post('/api/integrations/highlevel/connect').send({ accessToken: 'ghl_12345678901234567890', locationId: 'location-123' }).expect(403)
+
+      const viewer = request.agent(app)
+      await viewer.post('/api/auth/login').send({ email: 'viewer@example.com', password: 'viewer-pass-123' }).expect(200)
+      await viewer.post('/api/integrations/clickup/connect').send({ apiToken: 'pk_12345678901234567890', listId: 'list-123' }).expect(403)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('runs sandbox syncs without storing fake credentials', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'leakline-sandbox-'))
     try {
