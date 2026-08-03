@@ -75,7 +75,11 @@ export default function RenewalDataSourcesPage({
     try {
       const body = await renewalApi<{ clients: RenewalClient[]; result: { created: number; updated: number; unchanged: number } }>('/api/renewal-clients/import-clickup', {
         method: 'POST',
-        body: JSON.stringify(clickUpPreview),
+        body: JSON.stringify({
+          fileName: clickUpPreview.fileName,
+          sourceRows: clickUpPreview.sourceRows,
+          rows: clickUpPreview.rows,
+        }),
       })
       setClients(body.clients)
       setClickUpPreview(null)

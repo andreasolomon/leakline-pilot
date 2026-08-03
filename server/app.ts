@@ -147,7 +147,7 @@ const clickUpRenewalImportSchema = z.object({
   fileName: z.string().trim().min(1).max(200),
   sourceRows: z.number().int().min(1).max(5_000),
   rows: z.array(clickUpRenewalRowSchema).min(1).max(500),
-}).strict()
+}).strip()
 const kpiSnapshotFieldsSchema = z.object({
   periodStart: z.string().date(),
   periodEnd: z.string().date(),

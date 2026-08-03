@@ -251,6 +251,9 @@ describe.sequential('server hardening', () => {
       const payload = {
         fileName: 'Client Manager.csv',
         sourceRows: 2,
+        issues: [],
+        completedWebinarDates: 3,
+        futureWebinarDates: 1,
         rows: [
           { clickUpTaskId: 'task-existing', name: 'Existing Client Updated', email: 'existing@example.com', firstWebinarAt: '2026-07-01', lastWebinarAt: '2026-07-20', nextWebinarAt: '2026-08-05', webinarsHosted: 2, clickUpStatus: 'Active' },
           { clickUpTaskId: 'task-new', name: 'New Client', email: 'new@example.com', firstWebinarAt: '2026-07-10', lastWebinarAt: '2026-07-10', webinarsHosted: 1 },
