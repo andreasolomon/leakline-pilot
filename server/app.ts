@@ -17,7 +17,7 @@ import { createRateLimiter, requireSameOriginMutation, securityHeaders } from '.
 import { upsertClickUpRenewalClients } from './renewalImport.js'
 import { RenewalOutreachService } from './renewalOutreach.js'
 
-const providerSchema = z.enum(['stripe', 'whop', 'fanbasis', 'highlevel', 'google-calendar', 'fathom', 'clickup'])
+const providerSchema = z.enum(['stripe', 'whop', 'fanbasis', 'highlevel', 'google-calendar', 'fathom', 'clickup', 'quo'])
 const isValidationError = (error: unknown) => error instanceof z.ZodError || Boolean(error && typeof error === 'object' && Array.isArray((error as { issues?: unknown }).issues))
 const roleSchema = z.enum(['owner', 'admin', 'manager', 'viewer'])
 const inviteRoleSchema = z.enum(['admin', 'manager', 'viewer'])
@@ -85,9 +85,14 @@ const renewalOutreachSendSchema = renewalOutreachPreviewSchema.extend({
   approved: z.literal(true),
   idempotencyKey: z.string().trim().min(8).max(100),
 }).strict()
+const renewalConversationSendSchema = z.object({
+  body: z.string().trim().min(1).max(1_600),
+  idempotencyKey: z.string().trim().min(8).max(100),
+}).strict()
 const renewalClientFieldsSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.union([z.string().trim().email().max(160), z.literal('')]).optional().transform((value) => value || undefined),
+  phone: z.union([z.string().trim().regex(/^\+[1-9]\d{7,14}$/, 'Use international format, for example +15551234567.'), z.literal('')]).optional().transform((value) => value || undefined),
   owner: z.string().trim().min(2).max(100),
   enrolledAt: optionalDateSchema.optional(),
   firstWebinarAt: optionalDateSchema.optional(),
@@ -114,6 +119,7 @@ function renewalInputFromRecord(client: RenewalClientRecord) {
   return {
     name: client.name,
     email: client.email,
+    phone: client.phone,
     owner: client.owner,
     enrolledAt: client.enrolledAt,
     firstWebinarAt: client.firstWebinarAt,
@@ -133,6 +139,7 @@ const clickUpRenewalRowSchema = z.object({
   clickUpTaskId: z.string().trim().min(1).max(100),
   name: z.string().trim().min(2).max(120),
   email: z.union([z.string().trim().email().max(160), z.literal('')]).optional().transform((value) => value || undefined),
+  phone: z.union([z.string().trim().regex(/^\+[1-9]\d{7,14}$/, 'Use international format, for example +15551234567.'), z.literal('')]).optional().transform((value) => value || undefined),
   firstWebinarAt: optionalDateSchema.optional(),
   lastWebinarAt: optionalDateSchema.optional(),
   nextWebinarAt: optionalDateSchema.optional(),
@@ -754,6 +761,25 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     }
   })
 
+  app.get('/api/renewal-clients/:clientId/conversation', async (request, response) => {
+    try {
+      response.json(await renewalOutreach.conversation(activeWorkspaceId(response), request.params.clientId))
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(/not found/i.test(message) ? 404 : 409).json({ error: message })
+    }
+  })
+
+  app.post('/api/renewal-clients/:clientId/conversation/send', async (request, response) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      response.json(await renewalOutreach.sendConversationMessage(activeWorkspaceId(response), request.params.clientId, renewalConversationSendSchema.parse(request.body), response.locals.user as PublicUser))
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(error instanceof z.ZodError ? 400 : /not found/i.test(message) ? 404 : /manager|access/i.test(message) ? 403 : 409).json({ error: message })
+    }
+  })
+
   app.post('/api/renewal-clients', async (request, response) => {
     try {
       auth.requireDataEditor(response.locals.user as PublicUser)
@@ -1105,7 +1131,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     try {
       const provider = providerSchema.parse(request.params.provider)
       const actor = response.locals.user as PublicUser
-      if (provider === 'clickup') auth.requireDataEditor(actor)
+      if (provider === 'clickup' || provider === 'quo') auth.requireDataEditor(actor)
       else auth.requireIntegrationManager(actor)
       if (provider === 'google-calendar') return response.status(400).json({ error: 'Use the Google OAuth start endpoint.' })
       const credential = provider === 'stripe'
@@ -1118,6 +1144,8 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
           ? z.object({ accessToken: z.string().min(20), locationId: z.string().min(5) }).parse(request.body)
           : provider === 'clickup'
             ? z.object({ apiToken: z.string().min(20).regex(/^pk_/, 'Use a ClickUp personal API token beginning with pk_.'), listId: z.string().trim().min(3).max(100).regex(/^[A-Za-z0-9_-]+$/, 'Use the List ID from the ClickUp List URL.') }).parse(request.body)
+          : provider === 'quo'
+            ? z.object({ apiKey: z.string().trim().min(20), from: z.string().trim().regex(/^\+[1-9]\d{7,14}$/, 'Use the Quo sending number in international format, for example +15551234567.') }).parse(request.body)
           : z.object({ apiKey: z.string().min(10) }).parse(request.body)
       await service.connect(activeWorkspaceId(response), provider, credential as never)
       response.json(await service.snapshot(activeWorkspaceId(response)))
@@ -1138,7 +1166,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     try {
       const provider = providerSchema.parse(request.params.provider)
       const actor = response.locals.user as PublicUser
-      if (provider === 'clickup') auth.requireDataEditor(actor)
+      if (provider === 'clickup' || provider === 'quo') auth.requireDataEditor(actor)
       else auth.requireIntegrationManager(actor)
       await service.disconnect(activeWorkspaceId(response), provider)
       response.json(await service.snapshot(activeWorkspaceId(response)))

@@ -3,7 +3,7 @@ import type { PublicUser } from './authService.js'
 import type { PaymentRecoveryClassification, RecoveryAttemptChannel } from './types.js'
 import type { PaymentRecoveryRepository } from './paymentRecoveryRepository.js'
 import { promiseConfirmationDraft, renderRecoveryMessage } from './paymentRecovery.js'
-import { sendHighLevelRecoveryMessage } from './providers.js'
+import { sendHighLevelRecoveryMessage, sendQuoMessage } from './providers.js'
 
 function assertSafeOutboundMessage(body: string) {
   if (body.includes('[secure payment link unavailable]') || /\{\{[^}]+\}\}/.test(body)) throw new Error('This message still contains an unresolved placeholder. Add a verified provider-hosted payment link before sending.')
@@ -40,16 +40,19 @@ export class PaymentRecoveryService {
     const simulated = recoveryCase.sourcePaymentId.includes('_sample_') || workspace.connections.highlevel?.mode === 'sandbox'
     let providerMessageId: string | undefined
     if (!simulated) {
-      const credential = workspace.credentials.highlevel
-      if (!credential) throw new Error('Connect GoHighLevel before sending live SMS or email.')
-      if (!recoveryCase.contactId) throw new Error('Match this payment customer to a GoHighLevel contact before sending.')
-      const sent = await sendHighLevelRecoveryMessage(credential, { contactId: recoveryCase.contactId, channel, body: preview.body, subject: preview.subject, fromEmail: workspace.recoveryPolicy.senderEmail, fromNumber: workspace.recoveryPolicy.senderPhone }, this.fetcher)
+      if (channel === 'sms' && !workspace.credentials.quo) throw new Error('Connect Quo before sending live SMS.')
+      if (channel === 'sms' && !recoveryCase.customerPhone) throw new Error('Add a customer phone number before sending SMS.')
+      if (channel === 'email' && !workspace.credentials.highlevel) throw new Error('Connect GoHighLevel before sending live email.')
+      if (channel === 'email' && !recoveryCase.contactId) throw new Error('Match this payment customer to a GoHighLevel contact before sending email.')
+      const sent = channel === 'sms'
+        ? await sendQuoMessage(workspace.credentials.quo!, { to: recoveryCase.customerPhone!, body: preview.body }, this.fetcher)
+        : await sendHighLevelRecoveryMessage(workspace.credentials.highlevel!, { contactId: recoveryCase.contactId!, channel: 'email', body: preview.body, subject: preview.subject, fromEmail: workspace.recoveryPolicy.senderEmail }, this.fetcher)
       providerMessageId = sent.messageId
     }
     let updated = await this.repository.addAttempt(workspaceId, caseId, {
       channel,
       direction: 'outbound',
-      summary: `${channel.toUpperCase()} recovery message ${simulated ? 'simulated' : 'sent through GoHighLevel'}.`,
+      summary: `${channel.toUpperCase()} recovery message ${simulated ? 'simulated' : `sent through ${channel === 'sms' ? 'Quo' : 'GoHighLevel'}`}.`,
       body: preview.body,
       providerMessageId,
       simulated,
@@ -73,13 +76,16 @@ export class PaymentRecoveryService {
     const simulated = recoveryCase.sourcePaymentId.includes('_sample_') || workspace.connections.highlevel?.mode === 'sandbox'
     let providerMessageId: string | undefined
     if (!simulated) {
-      const credential = workspace.credentials.highlevel
-      if (!credential) throw new Error('Connect GoHighLevel before sending a live assisted response.')
-      if (!recoveryCase.contactId) throw new Error('Match this payment customer to a GoHighLevel contact before sending.')
-      const sent = await sendHighLevelRecoveryMessage(credential, { contactId: recoveryCase.contactId, channel: suggestion.channel, body: input.body, subject: input.subject, fromEmail: workspace.recoveryPolicy.senderEmail, fromNumber: workspace.recoveryPolicy.senderPhone }, this.fetcher)
+      if (suggestion.channel === 'sms' && !workspace.credentials.quo) throw new Error('Connect Quo before sending a live assisted SMS response.')
+      if (suggestion.channel === 'sms' && !recoveryCase.customerPhone) throw new Error('Add a customer phone number before sending SMS.')
+      if (suggestion.channel === 'email' && !workspace.credentials.highlevel) throw new Error('Connect GoHighLevel before sending a live assisted email response.')
+      if (suggestion.channel === 'email' && !recoveryCase.contactId) throw new Error('Match this payment customer to a GoHighLevel contact before sending email.')
+      const sent = suggestion.channel === 'sms'
+        ? await sendQuoMessage(workspace.credentials.quo!, { to: recoveryCase.customerPhone!, body: input.body }, this.fetcher)
+        : await sendHighLevelRecoveryMessage(workspace.credentials.highlevel!, { contactId: recoveryCase.contactId!, channel: 'email', body: input.body, subject: input.subject, fromEmail: workspace.recoveryPolicy.senderEmail }, this.fetcher)
       providerMessageId = sent.messageId
     }
-    await this.repository.addAttempt(workspaceId, caseId, { channel: suggestion.channel, direction: 'outbound', summary: `${suggestion.followUpId ? 'Follow-up' : 'Assisted reply'} ${simulated ? 'simulated' : 'sent through GoHighLevel'}.`, body: input.body, providerMessageId, simulated, createdBy: actor.name || actor.email })
+    await this.repository.addAttempt(workspaceId, caseId, { channel: suggestion.channel, direction: 'outbound', summary: `${suggestion.followUpId ? 'Follow-up' : 'Assisted reply'} ${simulated ? 'simulated' : `sent through ${suggestion.channel === 'sms' ? 'Quo' : 'GoHighLevel'}`}.`, body: input.body, providerMessageId, simulated, createdBy: actor.name || actor.email })
     const updated = await this.repository.updateSuggestion(workspaceId, caseId, suggestionId, { status: 'sent', body: input.body, subject: input.subject })
     return { case: updated, simulated }
   }

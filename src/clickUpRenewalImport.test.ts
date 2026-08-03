@@ -2,17 +2,18 @@ import { describe, expect, it } from 'vitest'
 import { classifyClickUpImport, parseClickUpRenewalCsv } from './clickUpRenewalImport'
 import type { RenewalClient } from './renewalCommand'
 
-const headers = 'Task ID,Task Name,Webinar 1 (date),Webinar 2 (date),Webinar NEXT (date),Email (short text),z[Webinar Plan Status]z (drop down)'
+const headers = 'Task ID,Task Name,Webinar 1 (date),Webinar 2 (date),Webinar NEXT (date),Email (short text),Phone (short text),z[Webinar Plan Status]z (drop down)'
 
 describe('ClickUp renewal import', () => {
   it('maps completed webinars separately from future sessions', () => {
     const preview = parseClickUpRenewalCsv('clients.csv', `${headers}
-task-1,Donna Kelly,"Thursday, July 16th 2026","Wednesday, July 29th 2026","Wednesday, July 29th 2026",DONNA@example.com,Ended`, new Date('2026-07-28T12:00:00.000Z'))
+task-1,Donna Kelly,"Thursday, July 16th 2026","Wednesday, July 29th 2026","Wednesday, July 29th 2026",DONNA@example.com,"(518) 368-4959",Ended`, new Date('2026-07-28T12:00:00.000Z'))
 
     expect(preview.rows).toEqual([{
       clickUpTaskId: 'task-1',
       name: 'Donna Kelly',
       email: 'donna@example.com',
+      phone: '+15183684959',
       firstWebinarAt: '2026-07-16',
       lastWebinarAt: '2026-07-16',
       nextWebinarAt: '2026-07-29',
@@ -25,8 +26,8 @@ task-1,Donna Kelly,"Thursday, July 16th 2026","Wednesday, July 29th 2026","Wedne
 
   it('requires task identity and reports invalid source values', () => {
     const preview = parseClickUpRenewalCsv('clients.csv', `${headers}
-,Missing ID,not-a-date,,,,wrong-email,
-task-2,Valid Client,,,,valid@example.com,`)
+,Missing ID,not-a-date,,,,wrong-email,,
+task-2,Valid Client,,,,valid@example.com,,`)
 
     expect(preview.rows).toHaveLength(1)
     expect(preview.issues.some((issue) => issue.includes('Task ID or Task Name'))).toBe(true)

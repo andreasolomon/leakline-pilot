@@ -1,4 +1,4 @@
-export type ProviderId = 'stripe' | 'whop' | 'fanbasis' | 'highlevel' | 'google-calendar' | 'fathom' | 'clickup'
+export type ProviderId = 'stripe' | 'whop' | 'fanbasis' | 'highlevel' | 'google-calendar' | 'fathom' | 'clickup' | 'quo'
 export type PaymentProviderId = 'stripe' | 'whop' | 'fanbasis'
 
 export type NormalizedRow = Record<string, string | number | boolean | null>
@@ -45,6 +45,7 @@ export type HighLevelCredential = { accessToken: string; locationId: string }
 export type FathomCredential = { apiKey: string }
 export type GoogleCredential = { accessToken: string; refreshToken?: string; expiresAt: number; email?: string }
 export type ClickUpCredential = { apiToken: string; listId: string }
+export type QuoCredential = { apiKey: string; from: string; phoneNumberId?: string }
 
 export type CredentialMap = {
   stripe: StripeCredential
@@ -54,6 +55,7 @@ export type CredentialMap = {
   fathom: FathomCredential
   'google-calendar': GoogleCredential
   clickup: ClickUpCredential
+  quo: QuoCredential
 }
 
 export type StoreState = {
@@ -113,6 +115,7 @@ export type RenewalClientRecord = {
   id: string
   name: string
   email?: string
+  phone?: string
   owner: string
   enrolledAt?: string
   firstWebinarAt?: string
@@ -150,6 +153,7 @@ export type ClickUpRenewalRow = {
   clickUpTaskId: string
   name: string
   email?: string
+  phone?: string
   firstWebinarAt?: string
   lastWebinarAt?: string
   nextWebinarAt?: string

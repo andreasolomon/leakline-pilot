@@ -37,6 +37,7 @@ export type RenewalClient = {
   id: string
   name: string
   email?: string
+  phone?: string
   owner: string
   enrolledAt?: string
   firstWebinarAt?: string

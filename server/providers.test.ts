@@ -54,6 +54,7 @@ describe('Version 2 provider adapters', () => {
       status: { status: 'active' },
       custom_fields: [
         { id: 'email', name: 'Email (Short Text)', type: 'short_text', value: 'CLIENT@EXAMPLE.COM' },
+        { id: 'phone', name: 'Phone (Short Text)', type: 'short_text', value: '(518) 368-4959' },
         { id: 'webinar-1', name: 'Webinar 1 Date', type: 'date', value: String(Date.parse('2026-07-01T12:00:00.000Z')) },
         { id: 'webinar-2', name: 'Webinar 2 Date', type: 'date', value: String(Date.parse('2026-07-20T12:00:00.000Z')) },
         { id: 'webinar-next', name: 'Webinar NEXT Date', type: 'date', value: String(Date.parse('2026-08-05T12:00:00.000Z')) },
@@ -65,6 +66,7 @@ describe('Version 2 provider adapters', () => {
       clickUpTaskId: 'task-client-1',
       name: 'Renewal Client',
       email: 'client@example.com',
+      phone: '+15183684959',
       firstWebinarAt: '2026-07-01',
       lastWebinarAt: '2026-07-20',
       nextWebinarAt: '2026-08-05',
@@ -148,7 +150,7 @@ describe('Version 2 service boundary', () => {
 
       const integrations = await agent.get('/api/integrations')
       expect(integrations.status).toBe(200)
-      expect(integrations.body.statuses).toHaveLength(7)
+      expect(integrations.body.statuses).toHaveLength(8)
 
       await agent.post('/api/auth/logout').send({})
       expect((await agent.get('/api/integrations')).status).toBe(401)
@@ -327,7 +329,7 @@ describe('Version 2 service boundary', () => {
       expect((await request(app).get('/api/health')).body).toEqual({ ok: true, version: 2 })
       const integrations = await request(app).get('/api/integrations')
       expect(integrations.status).toBe(200)
-      expect(integrations.body.statuses).toHaveLength(7)
+      expect(integrations.body.statuses).toHaveLength(8)
     } finally { await rm(directory, { recursive: true, force: true }) }
   })
 
@@ -405,6 +407,7 @@ describe('Version 2 service boundary', () => {
     const fetcher = vi.fn(async (input: string | URL | Request) => {
       const url = String(input)
       if (/\/api\/v2\/list\/list-123$/.test(url)) return reply({ id: 'list-123', name: 'Client Manager' })
+      if (url.endsWith('/v1/phone-numbers')) return reply({ data: [{ id: 'PN123', name: 'Renewals', number: '+15551234567' }] })
       if (url.includes('/api/v2/list/list-123/task')) return reply({ tasks: [{
         id: 'task-1',
         name: 'Pilot Client',
@@ -430,6 +433,7 @@ describe('Version 2 service boundary', () => {
     const fetcher = vi.fn(async (input: string | URL | Request) => {
       const url = String(input)
       if (/\/api\/v2\/list\/list-123$/.test(url)) return reply({ id: 'list-123', name: 'Client Manager' })
+      if (url.endsWith('/v1/phone-numbers')) return reply({ data: [{ id: 'PN123', name: 'Renewals', number: '+15551234567' }] })
       return reply({})
     }) as unknown as typeof fetch
     try {
@@ -443,11 +447,14 @@ describe('Version 2 service boundary', () => {
       await manager.post('/api/auth/login').send({ email: 'yonas@example.com', password: 'manager-pass-123' }).expect(200)
       await manager.post('/api/integrations/clickup/connect').send({ apiToken: 'pk_12345678901234567890', listId: 'list-123' }).expect(200)
       await manager.post('/api/integrations/clickup/disconnect').expect(200)
+      await manager.post('/api/integrations/quo/connect').send({ apiKey: 'quo_12345678901234567890', from: '+15551234567' }).expect(200)
+      await manager.post('/api/integrations/quo/disconnect').expect(200)
       await manager.post('/api/integrations/highlevel/connect').send({ accessToken: 'ghl_12345678901234567890', locationId: 'location-123' }).expect(403)
 
       const viewer = request.agent(app)
       await viewer.post('/api/auth/login').send({ email: 'viewer@example.com', password: 'viewer-pass-123' }).expect(200)
       await viewer.post('/api/integrations/clickup/connect').send({ apiToken: 'pk_12345678901234567890', listId: 'list-123' }).expect(403)
+      await viewer.post('/api/integrations/quo/connect').send({ apiKey: 'quo_12345678901234567890', from: '+15551234567' }).expect(403)
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

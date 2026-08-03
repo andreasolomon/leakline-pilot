@@ -10,6 +10,7 @@ export async function renewalApi<T>(path = '/api/renewal-clients', init?: Reques
 export const emptyRenewalClient = (): RenewalClientInput => ({
   name: '',
   email: '',
+  phone: '',
   owner: 'Client success manager',
   enrolledAt: undefined,
   firstWebinarAt: undefined,

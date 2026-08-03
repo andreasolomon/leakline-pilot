@@ -1,4 +1,4 @@
-import type { CallRecord, ClickUpCredential, ClickUpRenewalRow, DatasetImport, FathomCredential, GoogleCredential, HighLevelCredential, NormalizedRow, StripeCredential, WhopCredential } from './types.js'
+import type { CallRecord, ClickUpCredential, ClickUpRenewalRow, DatasetImport, FathomCredential, GoogleCredential, HighLevelCredential, NormalizedRow, QuoCredential, StripeCredential, WhopCredential } from './types.js'
 
 type Fetcher = typeof fetch
 const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -156,10 +156,21 @@ function clickUpDate(value: string) {
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString().slice(0, 10) : undefined
 }
 
+function normalisePhone(value: string) {
+  const raw = value.trim()
+  if (!raw) return undefined
+  const digits = raw.replace(/\D/g, '')
+  if (raw.startsWith('+') && digits.length >= 8 && digits.length <= 15) return `+${digits}`
+  if (digits.length === 10) return `+1${digits}`
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`
+  return undefined
+}
+
 function clickUpTaskRow(task: ClickUpTask, now = new Date()): ClickUpRenewalRow {
   const fields = new Map((task.custom_fields ?? []).map((field) => [normaliseClickUpField(field.name), field]))
   const field = (...names: string[]) => names.map((name) => fields.get(name)).find(Boolean)
   const emailValue = clickUpFieldValue(field('email_short_text', 'email')).trim().toLowerCase()
+  const phoneValue = clickUpFieldValue(field('phone_short_text', 'phone', 'phone_number'))
   const today = now.toISOString().slice(0, 10)
   const completedDates = [...fields.entries()]
     .filter(([name]) => /^webinar_\d+(?:_date)?$/.test(name))
@@ -177,6 +188,7 @@ function clickUpTaskRow(task: ClickUpTask, now = new Date()): ClickUpRenewalRow 
     clickUpTaskId: task.id,
     name: task.name.trim(),
     email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue) ? emailValue : undefined,
+    phone: normalisePhone(phoneValue),
     firstWebinarAt: completedDates[0],
     lastWebinarAt: completedDates.at(-1),
     nextWebinarAt: futureDates[0],
@@ -203,6 +215,58 @@ export async function syncClickUp(credential: ClickUpCredential, fetcher: Fetche
     if (batch.length < 100) break
   }
   return tasks.filter((task) => task.id && task.name?.trim()).map((task) => clickUpTaskRow(task))
+}
+
+type QuoPhoneNumber = {
+  id: string
+  name?: string
+  number?: string
+  formattedNumber?: string
+}
+
+const quoHeaders = (apiKey: string) => ({ Authorization: apiKey, Accept: 'application/json' })
+
+export async function validateQuo(credential: QuoCredential, fetcher: Fetcher = fetch) {
+  const result = await jsonRequest<{ data?: QuoPhoneNumber[] }>('https://api.quo.com/v1/phone-numbers', { headers: quoHeaders(credential.apiKey) }, fetcher)
+  const phone = (result.data ?? []).find((item) => item.number === credential.from || item.formattedNumber === credential.from)
+  if (!phone) throw new Error('The sending number was not found in this Quo workspace. Use the full number including country code, for example +15551234567.')
+  return { accountLabel: `${phone.name || 'Quo'} · ${credential.from}`, phoneNumberId: phone.id }
+}
+
+export async function sendQuoMessage(credential: QuoCredential, input: { to: string; body: string }, fetcher: Fetcher = fetch) {
+  const result = await jsonRequest<{ data?: { id?: string; conversationId?: string } }>('https://api.quo.com/v1/messages', {
+    method: 'POST',
+    headers: { ...quoHeaders(credential.apiKey), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: input.body, from: credential.from, to: [input.to] }),
+  }, fetcher)
+  return { messageId: result.data?.id, conversationId: result.data?.conversationId }
+}
+
+export type QuoConversationMessage = {
+  id: string
+  direction: 'inbound' | 'outbound'
+  body: string
+  status: string
+  createdAt: string
+  conversationId?: string
+}
+
+export async function listQuoMessages(credential: QuoCredential, participant: string, fetcher: Fetcher = fetch): Promise<QuoConversationMessage[]> {
+  let phoneNumberId = credential.phoneNumberId
+  if (!phoneNumberId) phoneNumberId = (await validateQuo(credential, fetcher)).phoneNumberId
+  const url = new URL('https://api.quo.com/v1/messages')
+  url.searchParams.set('phoneNumberId', phoneNumberId)
+  url.searchParams.append('participants', participant)
+  url.searchParams.set('maxResults', '100')
+  const result = await jsonRequest<{ data?: Array<{ id?: string; from?: string; to?: string[]; text?: string; content?: string; direction?: string; status?: string; createdAt?: string; conversationId?: string }> }>(url.toString(), { headers: quoHeaders(credential.apiKey) }, fetcher)
+  return (result.data ?? []).filter((message) => message.id && (message.text || message.content)).map((message) => ({
+    id: message.id!,
+    direction: message.from === credential.from || message.direction === 'outgoing' || message.direction === 'outbound' ? 'outbound' as const : 'inbound' as const,
+    body: message.text || message.content || '',
+    status: message.status || 'unknown',
+    createdAt: message.createdAt || new Date(0).toISOString(),
+    conversationId: message.conversationId,
+  })).sort((left, right) => left.createdAt.localeCompare(right.createdAt))
 }
 
 type WhopPayment = {

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import type { PublicUser } from './authService.js'
-import { sendHighLevelMessage } from './providers.js'
+import { listQuoMessages, sendHighLevelMessage, sendQuoMessage } from './providers.js'
 import type { NormalizedRow, RenewalClientRecord, RenewalOutreachActivityRecord, RenewalOutreachKind, WorkspaceRecord } from './types.js'
 import type { EncryptedStore } from './store.js'
 
@@ -49,7 +49,7 @@ function contactForClient(workspace: WorkspaceRecord, client: RenewalClientRecor
   return {
     contactId: text(lead?.id) || client.crmContactId,
     email: text(lead?.email) || client.email,
-    phone: text(lead?.phone),
+    phone: client.phone || text(lead?.phone),
   }
 }
 
@@ -113,14 +113,17 @@ export class RenewalOutreachService {
     validateKind(client, input.kind)
     const contact = contactForClient(workspace, client)
     const destination = input.channel === 'sms' ? contact.phone : contact.email
-    const connected = Boolean(workspace.credentials.highlevel) || workspace.connections.highlevel?.mode === 'sandbox'
+    const simulated = workspace.connections.highlevel?.mode === 'sandbox'
+    const highLevelConnected = Boolean(workspace.credentials.highlevel) || simulated
+    const quoConnected = Boolean(workspace.credentials.quo) || simulated
+    const connected = input.channel === 'sms' ? quoConnected : highLevelConnected
     const draft = buildMessage(workspace, client, input.kind, eligibility.daysRemaining)
     const reason = !eligibility.available
       ? eligibility.reason
       : !connected
-        ? 'Connect GoHighLevel before sending this draft.'
-        : !contact.contactId
-          ? 'Match this renewal client to a GoHighLevel contact before sending.'
+        ? `Connect ${input.channel === 'sms' ? 'Quo' : 'GoHighLevel'} before sending this draft.`
+        : input.channel === 'email' && !contact.contactId
+          ? 'Match this renewal client to a GoHighLevel contact before sending email.'
           : !destination
             ? `Add a ${input.channel === 'sms' ? 'phone number' : 'valid email'} to the matched GoHighLevel contact.`
             : 'Ready for review and approval.'
@@ -130,8 +133,9 @@ export class RenewalOutreachService {
       kind: input.kind,
       to: destination,
       contactMatched: Boolean(contact.contactId),
-      highLevelConnected: connected,
-      canSend: eligibility.available && connected && Boolean(contact.contactId) && Boolean(destination),
+      highLevelConnected,
+      quoConnected,
+      canSend: eligibility.available && connected && Boolean(destination) && (input.channel === 'sms' || Boolean(contact.contactId)),
       reason,
       daysRemaining: eligibility.daysRemaining,
       history: [...(client.outreach ?? [])].sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
@@ -182,19 +186,14 @@ export class RenewalOutreachService {
     let conversationId: string | undefined
     try {
       if (!simulated) {
-        const credential = workspace.credentials.highlevel
-        if (!credential || !contact.contactId) throw new Error('Connect and match GoHighLevel before sending.')
-        const sent = await sendHighLevelMessage(credential, {
-          contactId: contact.contactId,
-          channel: input.channel,
-          body: input.body,
-          subject: input.subject,
-        }, this.fetcher)
+        const sent = input.channel === 'sms'
+          ? await sendQuoMessage(workspace.credentials.quo!, { to: contact.phone!, body: input.body }, this.fetcher)
+          : await sendHighLevelMessage(workspace.credentials.highlevel!, { contactId: contact.contactId!, channel: 'email', body: input.body, subject: input.subject }, this.fetcher)
         providerMessageId = sent.messageId
         conversationId = sent.conversationId
       }
     } catch (error) {
-      const failureReason = error instanceof Error ? error.message.slice(0, 500) : 'GoHighLevel delivery failed.'
+      const failureReason = error instanceof Error ? error.message.slice(0, 500) : `${input.channel === 'sms' ? 'Quo' : 'GoHighLevel'} delivery failed.`
       await this.store.update((draft) => {
         const activity = draft.workspaces.find((item) => item.id === workspaceId)?.renewalClients.find((item) => item.id === clientId)?.outreach?.find((item) => item.id === activityId)
         if (activity) Object.assign(activity, { deliveryStatus: 'failed', failureReason })
@@ -217,6 +216,79 @@ export class RenewalOutreachService {
       updatedClient.updatedAt = new Date().toISOString()
     })
     return { client: updatedClient!, activity: updatedClient!.outreach!.find((item) => item.id === activityId)!, simulated, replayed: false }
+  }
+
+  async conversation(workspaceId: string, clientId: string) {
+    const state = await this.store.read()
+    const workspace = state.workspaces.find((item) => item.id === workspaceId && !item.archivedAt)
+    const client = workspace?.renewalClients.find((item) => item.id === clientId)
+    if (!workspace || !client) throw new Error('Renewal client not found.')
+    const contact = contactForClient(workspace, client)
+    if (!contact.phone) throw new Error('Add a mobile number to this renewal client before opening SMS history.')
+    const credential = workspace.credentials.quo
+    if (!credential) throw new Error('Connect Quo before opening SMS history.')
+    return {
+      clientId,
+      participant: contact.phone,
+      messages: await listQuoMessages(credential, contact.phone, this.fetcher),
+    }
+  }
+
+  async sendConversationMessage(workspaceId: string, clientId: string, input: { body: string; idempotencyKey: string }, actor: PublicUser) {
+    if (/\{\{[^}]+\}\}/.test(input.body)) throw new Error('This SMS contains an unresolved placeholder.')
+    const state = await this.store.read()
+    const workspace = state.workspaces.find((item) => item.id === workspaceId && !item.archivedAt)
+    const client = workspace?.renewalClients.find((item) => item.id === clientId)
+    if (!workspace || !client) throw new Error('Renewal client not found.')
+    const existing = (client.outreach ?? []).find((item) => item.idempotencyKey === input.idempotencyKey)
+    if (existing) return { client, activity: existing, replayed: true }
+    const contact = contactForClient(workspace, client)
+    if (!contact.phone) throw new Error('Add a mobile number to this renewal client before sending SMS.')
+    const credential = workspace.credentials.quo
+    if (!credential) throw new Error('Connect Quo before sending SMS.')
+    const now = new Date().toISOString()
+    const activityId = `renewal-outreach-${randomBytes(8).toString('hex')}`
+    const latestOutbound = latestDirection(client, 'outbound')
+    const pending: RenewalOutreachActivityRecord = {
+      id: activityId,
+      idempotencyKey: input.idempotencyKey,
+      direction: 'outbound',
+      channel: 'sms',
+      kind: latestOutbound?.kind ?? 'renewal_invitation',
+      templateKey: 'conversation_reply',
+      body: input.body,
+      deliveryStatus: 'pending',
+      renewalStatusAtSend: client.renewalStatus,
+      createdAt: now,
+      createdBy: actor.name || actor.email,
+    }
+    await this.store.update((draft) => {
+      const target = draft.workspaces.find((item) => item.id === workspaceId)?.renewalClients.find((item) => item.id === clientId)
+      if (!target) throw new Error('Renewal client not found.')
+      target.outreach ??= []
+      target.outreach.push(pending)
+      target.updatedAt = now
+    })
+    try {
+      const sent = await sendQuoMessage(credential, { to: contact.phone, body: input.body }, this.fetcher)
+      let updatedClient: RenewalClientRecord | undefined
+      await this.store.update((draft) => {
+        updatedClient = draft.workspaces.find((item) => item.id === workspaceId)?.renewalClients.find((item) => item.id === clientId)
+        const activity = updatedClient?.outreach?.find((item) => item.id === activityId)
+        if (!updatedClient || !activity) throw new Error('Renewal conversation activity not found.')
+        Object.assign(activity, { deliveryStatus: 'sent', providerMessageId: sent.messageId, conversationId: sent.conversationId })
+        updatedClient.nextAction = 'Review the client response and continue the renewal conversation.'
+        updatedClient.updatedAt = new Date().toISOString()
+      })
+      return { client: updatedClient!, activity: updatedClient!.outreach!.find((item) => item.id === activityId)!, replayed: false }
+    } catch (error) {
+      const failureReason = error instanceof Error ? error.message.slice(0, 500) : 'Quo delivery failed.'
+      await this.store.update((draft) => {
+        const activity = draft.workspaces.find((item) => item.id === workspaceId)?.renewalClients.find((item) => item.id === clientId)?.outreach?.find((item) => item.id === activityId)
+        if (activity) Object.assign(activity, { deliveryStatus: 'failed', failureReason })
+      })
+      throw error
+    }
   }
 
   async recordInbound(workspaceId: string, clientId: string, input: { channel: OutreachChannel; body: string; providerMessageId?: string; conversationId?: string }, createdBy: string) {

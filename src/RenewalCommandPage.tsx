@@ -47,7 +47,17 @@ type RenewalOutreachPreview = {
   daysRemaining?: number
   contactMatched: boolean
   highLevelConnected: boolean
+  quoConnected?: boolean
   history: RenewalOutreachActivity[]
+}
+
+type QuoConversationMessage = {
+  id: string
+  direction: 'inbound' | 'outbound'
+  body: string
+  status: string
+  createdAt: string
+  conversationId?: string
 }
 
 function formatDate(value?: string) {
@@ -84,6 +94,10 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
   const [outreachBody, setOutreachBody] = useState('')
   const [outreachApproved, setOutreachApproved] = useState(false)
   const [outreachKey, setOutreachKey] = useState('')
+  const [quoMessages, setQuoMessages] = useState<QuoConversationMessage[]>([])
+  const [conversationReply, setConversationReply] = useState('')
+  const [conversationError, setConversationError] = useState('')
+  const [conversationBusy, setConversationBusy] = useState('')
 
   const load = async () => {
     setBusy('loading')
@@ -108,7 +122,7 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
       const query = search.trim().toLowerCase()
       return (phaseFilter === 'all' || programmePhase(client) === phaseFilter)
         && (pipelineFilter === 'all' || renewalPipelineStage(client) === pipelineFilter)
-        && (!query || `${client.name} ${client.email ?? ''} ${client.owner} ${client.feedbackNote ?? ''}`.toLowerCase().includes(query))
+        && (!query || `${client.name} ${client.email ?? ''} ${client.phone ?? ''} ${client.owner} ${client.feedbackNote ?? ''}`.toLowerCase().includes(query))
     })
     .sort((left, right) => phasePriority[programmePhase(left)] - phasePriority[programmePhase(right)]
       || renewalReadiness(right).score - renewalReadiness(left).score
@@ -140,6 +154,7 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
       const payload = {
         ...draft,
         email: draft.email ?? '',
+        phone: draft.phone ?? '',
         enrolledAt: draft.enrolledAt ?? '',
         firstWebinarAt: draft.firstWebinarAt ?? '',
         lastWebinarAt: draft.lastWebinarAt ?? '',
@@ -221,13 +236,62 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
     }
   }
 
+  const loadQuoConversation = async (client: RenewalClient, quiet = false) => {
+    if (!client.phone) {
+      setQuoMessages([])
+      setConversationError('Add a mobile number to this client before opening the Quo conversation.')
+      return
+    }
+    if (!quiet) setConversationBusy('loading')
+    try {
+      const result = await renewalApi<{ messages: QuoConversationMessage[] }>(`/api/renewal-clients/${client.id}/conversation`)
+      setQuoMessages(result.messages)
+      setConversationError('')
+    } catch (event) {
+      setConversationError(event instanceof Error ? event.message : 'The Quo conversation could not be loaded.')
+    } finally {
+      if (!quiet) setConversationBusy('')
+    }
+  }
+
+  useEffect(() => {
+    if (!outreachOpen || !outreachClient || outreachChannel !== 'sms') return
+    void loadQuoConversation(outreachClient)
+    const timer = window.setInterval(() => void loadQuoConversation(outreachClient, true), 10_000)
+    return () => window.clearInterval(timer)
+  }, [outreachOpen, outreachClient?.id, outreachChannel])
+
+  const sendConversationReply = async () => {
+    if (!outreachClient || !conversationReply.trim()) return
+    setConversationBusy('sending')
+    setConversationError('')
+    try {
+      const result = await renewalApi<{ client: RenewalClient }>(`/api/renewal-clients/${outreachClient.id}/conversation/send`, {
+        method: 'POST',
+        body: JSON.stringify({ body: conversationReply.trim(), idempotencyKey: crypto.randomUUID() }),
+      })
+      setClients((current) => current.map((client) => client.id === result.client.id ? result.client : client))
+      setOutreachClient(result.client)
+      setConversationReply('')
+      setNotice(`SMS sent through Quo to ${result.client.name}.`)
+      await loadQuoConversation(result.client, true)
+    } catch (event) {
+      setConversationError(event instanceof Error ? event.message : 'The SMS could not be sent through Quo.')
+    } finally {
+      setConversationBusy('')
+    }
+  }
+
   const openOutreach = (client: RenewalClient) => {
     const kind: RenewalOutreachKind = client.feedbackScore === undefined ? 'feedback_request' : 'renewal_invitation'
-    const channel: 'sms' | 'email' = client.email ? 'email' : 'sms'
+    const channel: 'sms' | 'email' = client.phone ? 'sms' : 'email'
     setOutreachClient(client)
     setOutreachKind(kind)
     setOutreachChannel(channel)
     setOutreachKey(crypto.randomUUID())
+    setQuoMessages([])
+    setConversationReply('')
+    setConversationError('')
     setOutreachOpen(true)
     setNotice('')
     void fetchOutreachPreview(client, kind, channel)
@@ -400,6 +464,7 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
         <fieldset><legend>Client</legend><div className="renewal-editor-grid">
           <label>Client name<input required minLength={2} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
           <label>Email<input type="email" value={draft.email ?? ''} onChange={(event) => setDraft({ ...draft, email: event.target.value })} /></label>
+          <label>Mobile number<input type="tel" placeholder="+15551234567" value={draft.phone ?? ''} onChange={(event) => setDraft({ ...draft, phone: event.target.value })} /><small>Use international format so Quo can send SMS.</small></label>
           <label>Client success owner<input required minLength={2} value={draft.owner} onChange={(event) => setDraft({ ...draft, owner: event.target.value })} /></label>
           <label>Joined date<input type="date" value={draft.enrolledAt ?? ''} onChange={(event) => setDraft({ ...draft, enrolledAt: event.target.value || undefined })} /></label>
         </div></fieldset>
@@ -431,12 +496,12 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
       </form>
     </div>}
 
-    {outreachOpen && outreachClient && <div className="connection-modal-backdrop" onClick={() => setOutreachOpen(false)}>
+    {outreachOpen && outreachClient && <div className="connection-modal-backdrop renewal-conversation-backdrop" onClick={() => setOutreachOpen(false)}>
       <form className="connection-modal renewal-outreach-modal" onSubmit={sendOutreach} onClick={(event) => event.stopPropagation()}>
         <button type="button" className="modal-close" onClick={() => setOutreachOpen(false)}><X size={18} /></button>
         <span className="eyebrow">Assisted renewal outreach</span>
         <h2>Message {outreachClient.name}</h2>
-        <p>LeakLine prepares the draft. Review and approve the exact wording before anything is sent through GoHighLevel.</p>
+        <p>Review the suggested message, see the live conversation and send approved SMS through Quo.</p>
 
         <div className="renewal-outreach-layout">
           <section className="renewal-outreach-draft">
@@ -472,8 +537,17 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
           </section>
 
           <aside className="renewal-outreach-history">
-            <div><MessageSquareText size={16} /><span><strong>Communication history</strong><small>Evidence for the assisted pilot and future automation.</small></span></div>
-            {outreachPreview?.history.length ? <div className="renewal-outreach-events">{outreachPreview.history.map((activity) => <article key={activity.id} className={activity.direction}>
+            <div><MessageSquareText size={16} /><span><strong>{outreachChannel === 'sms' ? 'Quo conversation' : 'Communication history'}</strong><small>{outreachChannel === 'sms' ? 'Incoming replies refresh automatically while this drawer is open.' : 'Evidence for the assisted pilot and future automation.'}</small></span></div>
+            {outreachChannel === 'sms' ? <>
+              {conversationError && <div className="renewal-conversation-error"><AlertTriangle size={14} /><span>{conversationError}</span></div>}
+              {conversationBusy === 'loading' ? <div className="renewal-conversation-loading"><RefreshCw className="spin" size={16} /> Loading Quo messages…</div> : quoMessages.length ? <div className="quo-message-thread">{quoMessages.map((message) => <article key={message.id} className={message.direction}>
+                <p>{message.body}</p><small>{new Date(message.createdAt).toLocaleString('en-GB')} · {message.status}</small>
+              </article>)}</div> : !conversationError && <div className="renewal-outreach-empty"><MessageSquareQuote size={22} /><strong>No Quo messages yet</strong><span>Send the first approved SMS to start this conversation.</span></div>}
+              <div className="quo-reply-composer">
+                <label>Reply through Quo<textarea maxLength={1600} value={conversationReply} onChange={(event) => setConversationReply(event.target.value)} placeholder="Type the next response…" /></label>
+                <div><small>{conversationReply.length}/1600</small><button type="button" className="primary-button" disabled={!conversationReply.trim() || conversationBusy === 'sending' || Boolean(conversationError)} onClick={() => void sendConversationReply()}><Send size={13} /> {conversationBusy === 'sending' ? 'Sending…' : 'Send through Quo'}</button></div>
+              </div>
+            </> : outreachPreview?.history.length ? <div className="renewal-outreach-events">{outreachPreview.history.map((activity) => <article key={activity.id} className={activity.direction}>
               <span>{activity.direction === 'inbound' ? <MessageSquareText size={12} /> : <Send size={12} />}</span>
               <div><strong>{activity.direction === 'inbound' ? 'Client reply' : activity.kind.replaceAll('_', ' ')}</strong><small>{new Date(activity.createdAt).toLocaleString('en-GB')} · {activity.channel.toUpperCase()} · {activity.deliveryStatus}</small><p>{activity.body}</p></div>
             </article>)}</div> : <div className="renewal-outreach-empty"><MessageSquareQuote size={22} /><strong>No renewal messages yet</strong><span>The first approved message will start this client’s communication timeline.</span></div>}

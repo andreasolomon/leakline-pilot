@@ -27,6 +27,7 @@ export function upsertClickUpRenewalClients(workspace: WorkspaceRecord, rows: Cl
         id: `renewal-${randomBytes(8).toString('hex')}`,
         name: row.name,
         email: row.email,
+        phone: row.phone,
         owner: 'Yonas',
         firstWebinarAt: row.firstWebinarAt,
         lastWebinarAt: row.lastWebinarAt,
@@ -49,6 +50,7 @@ export function upsertClickUpRenewalClients(workspace: WorkspaceRecord, rows: Cl
     const sourceFields = {
       name: row.name,
       email: row.email,
+      phone: row.phone,
       firstWebinarAt: row.firstWebinarAt,
       lastWebinarAt: row.lastWebinarAt,
       nextWebinarAt: row.nextWebinarAt,

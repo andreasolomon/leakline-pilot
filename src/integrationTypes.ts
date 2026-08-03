@@ -1,6 +1,6 @@
 import type { ImportWorkspace } from './csvEngine'
 
-export type ProviderId = 'stripe' | 'whop' | 'fanbasis' | 'highlevel' | 'google-calendar' | 'fathom' | 'clickup'
+export type ProviderId = 'stripe' | 'whop' | 'fanbasis' | 'highlevel' | 'google-calendar' | 'fathom' | 'clickup' | 'quo'
 
 export type ProviderStatus = {
   id: ProviderId

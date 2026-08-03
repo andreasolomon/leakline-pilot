@@ -5,6 +5,7 @@ export type ClickUpRenewalRow = {
   clickUpTaskId: string
   name: string
   email?: string
+  phone?: string
   firstWebinarAt?: string
   lastWebinarAt?: string
   nextWebinarAt?: string
@@ -27,6 +28,7 @@ const aliases = {
   clickUpTaskId: ['task_id', 'id'],
   name: ['task_name', 'name', 'client_name'],
   email: ['email_short_text', 'email'],
+  phone: ['phone_short_text', 'phone', 'phone_number'],
   webinarOne: ['webinar_1_date', 'webinar_1'],
   webinarTwo: ['webinar_2_date', 'webinar_2'],
   webinarNext: ['webinar_next_date', 'webinar_next', 'next_webinar_date'],
@@ -68,6 +70,16 @@ function validEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 }
 
+function normalisePhone(value: string) {
+  const raw = value.trim()
+  if (!raw) return undefined
+  const digits = raw.replace(/\D/g, '')
+  if (raw.startsWith('+') && digits.length >= 8 && digits.length <= 15) return `+${digits}`
+  if (digits.length === 10) return `+1${digits}`
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`
+  return null
+}
+
 export function parseClickUpRenewalCsv(fileName: string, text: string, now = new Date()): ClickUpRenewalPreview {
   const parsed = parseCsv(text)
   const sourceRows = Math.max(0, parsed.length - 1)
@@ -78,6 +90,7 @@ export function parseClickUpRenewalCsv(fileName: string, text: string, now = new
     clickUpTaskId: columnIndex(headers, aliases.clickUpTaskId),
     name: columnIndex(headers, aliases.name),
     email: columnIndex(headers, aliases.email),
+    phone: columnIndex(headers, aliases.phone),
     webinarOne: columnIndex(headers, aliases.webinarOne),
     webinarTwo: columnIndex(headers, aliases.webinarTwo),
     webinarNext: columnIndex(headers, aliases.webinarNext),
@@ -111,6 +124,10 @@ export function parseClickUpRenewalCsv(fileName: string, text: string, now = new
     const rawEmail = indexes.email >= 0 ? (source[indexes.email] ?? '').trim().toLowerCase() : ''
     const email = rawEmail && validEmail(rawEmail) ? rawEmail : undefined
     if (rawEmail && !email) issues.push(`Row ${line}: the email address is invalid and was left blank.`)
+    const rawPhone = indexes.phone >= 0 ? (source[indexes.phone] ?? '').trim() : ''
+    const parsedPhone = normalisePhone(rawPhone)
+    const phone = parsedPhone || undefined
+    if (rawPhone && parsedPhone === null) issues.push(`Row ${line}: the phone number could not be converted to international format and was left blank.`)
 
     const datedFields = [
       { label: 'Webinar 1', value: indexes.webinarOne >= 0 ? source[indexes.webinarOne] ?? '' : '', nextOnly: false },
@@ -134,6 +151,7 @@ export function parseClickUpRenewalCsv(fileName: string, text: string, now = new
       clickUpTaskId,
       name,
       email,
+      phone,
       firstWebinarAt: completed[0],
       lastWebinarAt: completed.at(-1),
       nextWebinarAt: future[0],
@@ -148,6 +166,7 @@ export function parseClickUpRenewalCsv(fileName: string, text: string, now = new
 function sourceFieldsMatch(client: RenewalClient, row: ClickUpRenewalRow) {
   return client.name === row.name
     && (client.email ?? '') === (row.email ?? '')
+    && (client.phone ?? '') === (row.phone ?? '')
     && (client.firstWebinarAt ?? '') === (row.firstWebinarAt ?? '')
     && (client.lastWebinarAt ?? '') === (row.lastWebinarAt ?? '')
     && (client.nextWebinarAt ?? '') === (row.nextWebinarAt ?? '')

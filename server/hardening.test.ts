@@ -318,7 +318,10 @@ describe.sequential('server hardening', () => {
       const created = await owner.post('/api/kpi-snapshots').send(payload).expect(201)
       expect(created.body.snapshot.source).toBe('manual')
       expect((await owner.get('/api/kpi-snapshots').expect(200)).body.snapshots).toHaveLength(1)
-      const imported = await owner.post('/api/kpi-snapshots/import').send({ ...payload, cashCollected: 16_000, notes: 'Imported Gross Totals.' }).expect(200)
+      await owner.post('/api/admin/users').send({ name: 'Yonas', email: 'yonas@example.com', password: 'manager-pass-123', role: 'manager', workspaceIds: [launch.body.workspaceId] }).expect(201)
+      const manager = request.agent(app)
+      await manager.post('/api/auth/login').send({ email: 'yonas@example.com', password: 'manager-pass-123' }).expect(200)
+      const imported = await manager.post('/api/kpi-snapshots/import').send({ ...payload, cashCollected: 16_000, notes: 'Imported Gross Totals.' }).expect(200)
       expect(imported.body).toMatchObject({ action: 'updated', snapshot: { id: created.body.snapshot.id, source: 'csv', cashCollected: 16_000 } })
       expect((await owner.get('/api/kpi-snapshots').expect(200)).body.snapshots).toHaveLength(1)
 
