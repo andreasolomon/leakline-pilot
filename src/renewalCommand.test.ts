@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { daysUntilProgrammeEnd, programmeEndDate, programmePhase, recommendedRenewalAction, renewalPipelineStage, renewalPipelineSummary, renewalReadiness, renewalSummary, type RenewalClient } from './renewalCommand'
+import { daysUntilProgrammeEnd, programmeEndDate, programmePhase, recommendedRenewalAction, recommendedRenewalOutreachKind, renewalOutreachAvailability, renewalPipelineStage, renewalPipelineSummary, renewalReadiness, renewalSummary, type RenewalClient } from './renewalCommand'
 
 const client = (overrides: Partial<RenewalClient> = {}): RenewalClient => ({
   id: 'renewal-1',
@@ -44,7 +44,7 @@ describe('Renewal Command calculations', () => {
     expect(renewalReadiness(incomplete, new Date('2026-07-27T00:00:00.000Z'))).toMatchObject({ label: 'Needs activity' })
   })
 
-  it('prioritises re-engagement when an approaching client has stopped hosting webinars', () => {
+  it('prioritises the renewal review once a client enters the final 30 days', () => {
     const item = client({
       firstWebinarAt: '2026-05-15',
       lastWebinarAt: '2026-06-20',
@@ -52,7 +52,27 @@ describe('Renewal Command calculations', () => {
       feedbackScore: 4,
     })
     expect(programmePhase(item, new Date('2026-07-27T00:00:00.000Z'))).toBe('renewal_window')
-    expect(recommendedRenewalAction(item, new Date('2026-07-27T00:00:00.000Z'))).toMatch(/re-engage/i)
+    expect(recommendedRenewalAction(item, new Date('2026-07-27T00:00:00.000Z'))).toMatch(/renewal-window review/i)
+  })
+
+  it('selects outreach from the client phase and blocks clients awaiting activation', () => {
+    const now = new Date('2026-07-27T00:00:00.000Z')
+    const active = client({ firstWebinarAt: '2026-07-01', lastWebinarAt: '2026-07-25', webinarsHosted: 2 })
+    const inactive = client({ firstWebinarAt: '2026-06-01', lastWebinarAt: '2026-07-01', webinarsHosted: 2 })
+    const renewalWindow = client({ firstWebinarAt: '2026-05-15', lastWebinarAt: '2026-07-20', webinarsHosted: 5 })
+    const completed = client({ firstWebinarAt: '2026-04-01', lastWebinarAt: '2026-06-20', webinarsHosted: 6 })
+    const awaitingActivation = client({ enrolledAt: '2026-07-20' })
+
+    expect(recommendedRenewalOutreachKind(active, now)).toBe('programme_check_in')
+    expect(recommendedRenewalOutreachKind(inactive, now)).toBe('webinar_accountability')
+    expect(recommendedRenewalOutreachKind(renewalWindow, now)).toBe('renewal_window_review')
+    expect(recommendedRenewalOutreachKind(completed, now)).toBe('post_completion_review')
+    expect(recommendedRenewalAction(active, now)).toMatch(/program check-in/i)
+    expect(recommendedRenewalAction(renewalWindow, now)).toMatch(/renewal-window review/i)
+    expect(recommendedRenewalAction(completed, now)).toMatch(/post-completion review/i)
+    expect(renewalOutreachAvailability(active, now).available).toBe(true)
+    expect(renewalOutreachAvailability(inactive, now).available).toBe(true)
+    expect(renewalOutreachAvailability(awaitingActivation, now)).toMatchObject({ available: false })
   })
 
   it('automatically moves approaching clients into the renewal-opportunity stage', () => {
@@ -101,6 +121,24 @@ describe('Renewal Command calculations', () => {
       awaitingActivation: 1,
       renewalOpportunities: 1,
       highReadiness: 1,
+      renewalPipelineValue: 8000,
+      renewalCashCollected: 8000,
+    })
+  })
+
+  it('only counts genuinely open renewal stages in pipeline value', () => {
+    const now = new Date('2026-07-27T00:00:00.000Z')
+    const clients = [
+      client({ id: 'active', expectedRenewalValue: 8000 }),
+      client({ id: 'opportunity', firstWebinarAt: '2026-05-15', expectedRenewalValue: 8000 }),
+      client({ id: 'conversation', renewalStatus: 'conversation_needed', expectedRenewalValue: 9000 }),
+      client({ id: 'renewed', renewalStatus: 'renewed', expectedRenewalValue: 8000, renewalCashCollected: 8000 }),
+      client({ id: 'declined', renewalStatus: 'declined', expectedRenewalValue: 8000 }),
+    ]
+
+    expect(renewalSummary(clients, now)).toMatchObject({
+      renewalOpportunities: 2,
+      renewalPipelineValue: 17000,
       renewalCashCollected: 8000,
     })
   })

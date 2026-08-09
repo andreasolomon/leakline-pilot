@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateKpis, compareKpiValue, sortKpiSnapshots, type KpiSnapshot } from './kpiTracking'
+import { calculateKpis, compareKpiValue, effectiveKpiSnapshot, kpiCallEntryImpact, sortKpiSnapshots, type KpiSnapshot } from './kpiTracking'
 
 const snapshot = (overrides: Partial<KpiSnapshot> = {}): KpiSnapshot => ({
   id: 'kpi-1',
@@ -38,6 +38,22 @@ describe('KPI Tracking calculations', () => {
       cashPerCallTaken: 0,
       cashPerDeal: 0,
     })
+  })
+
+  it('adds individual call results to the imported or manual baseline', () => {
+    const withEntries = snapshot({ entries: [
+      { id: 'entry-1', occurredOn: '2026-07-07', personName: 'Alex Carter', outcome: 'split_pay', revenueValue: 8_000, cashCollected: 2_000, createdAt: '2026-07-07T12:00:00.000Z', createdBy: 'Yonas' },
+      { id: 'entry-2', occurredOn: '2026-07-07', personName: 'Jamie Lee', outcome: 'no_show', revenueValue: 0, cashCollected: 0, createdAt: '2026-07-07T13:00:00.000Z', createdBy: 'Yonas' },
+    ] })
+
+    expect(effectiveKpiSnapshot(withEntries)).toMatchObject({ bookedCalls: 22, callsTaken: 16, deals: 6, totalRevenue: 33_000, cashCollected: 17_000 })
+    expect(calculateKpis(withEntries).cashPerDeal).toBeCloseTo(17_000 / 6)
+  })
+
+  it('uses explicit outcome rules when counting calls and deals', () => {
+    expect(kpiCallEntryImpact({ outcome: 'full_pay', revenueValue: 5_000, cashCollected: 5_000 })).toEqual({ bookedCalls: 1, callsTaken: 1, deals: 1, totalRevenue: 5_000, cashCollected: 5_000 })
+    expect(kpiCallEntryImpact({ outcome: 'offer_didnt_buy', revenueValue: 0, cashCollected: 0 })).toEqual({ bookedCalls: 1, callsTaken: 1, deals: 0, totalRevenue: 0, cashCollected: 0 })
+    expect(kpiCallEntryImpact({ outcome: 'no_show', revenueValue: 0, cashCollected: 0 })).toEqual({ bookedCalls: 1, callsTaken: 0, deals: 0, totalRevenue: 0, cashCollected: 0 })
   })
 
   it('sorts the most recent reporting period first', () => {

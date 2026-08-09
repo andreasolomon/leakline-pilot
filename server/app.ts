@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import { EncryptedStore, defaultPilotValidation, defaultRecoveryPolicy } from './store.js'
 import { IntegrationService } from './integrationService.js'
-import type { KpiSnapshotRecord, ProviderId, RenewalClientRecord } from './types.js'
+import type { KpiCallEntryRecord, KpiSnapshotRecord, ProviderId, RenewalClientRecord } from './types.js'
 import { safeErrorMessage } from './safety.js'
 import { AuthService, type PublicUser } from './authService.js'
 import { frontendEntryForPath } from './frontendRoutes.js'
@@ -77,7 +77,7 @@ const pilotValidationSchema = z.object({
 })
 const optionalDateSchema = z.union([z.string().date(), z.literal('')]).transform((value) => value || undefined)
 const renewalStatusSchema = z.enum(['not_started', 'renewal_opportunity', 'conversation_needed', 'call_booked', 'decision_pending', 'renewed', 'declined'])
-const renewalOutreachKindSchema = z.enum(['feedback_request', 'renewal_invitation', 'no_response_follow_up'])
+const renewalOutreachKindSchema = z.enum(['feedback_request', 'renewal_invitation', 'programme_check_in', 'webinar_accountability', 'renewal_window_review', 'post_completion_review', 'no_response_follow_up'])
 const renewalOutreachPreviewSchema = z.object({ channel: z.enum(['sms', 'email']), kind: renewalOutreachKindSchema }).strict()
 const renewalOutreachSendSchema = renewalOutreachPreviewSchema.extend({
   subject: z.string().trim().max(180).optional(),
@@ -87,6 +87,7 @@ const renewalOutreachSendSchema = renewalOutreachPreviewSchema.extend({
 }).strict()
 const renewalConversationSendSchema = z.object({
   body: z.string().trim().min(1).max(1_600),
+  approved: z.literal(true),
   idempotencyKey: z.string().trim().min(8).max(100),
 }).strict()
 const renewalClientFieldsSchema = z.object({
@@ -171,6 +172,19 @@ const validateKpiSnapshot = (snapshot: z.infer<typeof kpiSnapshotFieldsSchema>, 
 }
 const kpiSnapshotInputSchema = kpiSnapshotFieldsSchema.superRefine(validateKpiSnapshot)
 const kpiSnapshotPatchSchema = kpiSnapshotFieldsSchema.partial().refine((value) => Object.keys(value).length > 0, 'Provide at least one field to update.')
+const kpiCallOutcomeSchema = z.enum(['full_pay', 'split_pay', 'deposit', 'no_deposit_follow_up', 'offer_didnt_buy', 'bad_fit_no_offer', 'no_show'])
+const kpiCallEntrySchema = z.object({
+  occurredOn: z.string().date(),
+  personName: z.string().trim().min(2).max(120),
+  outcome: kpiCallOutcomeSchema,
+  revenueValue: z.number().min(0).max(1_000_000_000),
+  cashCollected: z.number().min(0).max(1_000_000_000),
+  notes: z.string().trim().max(1_000).optional(),
+}).strict().superRefine((entry, context) => {
+  if (!['full_pay', 'split_pay', 'deposit'].includes(entry.outcome) && (entry.revenueValue > 0 || entry.cashCollected > 0)) {
+    context.addIssue({ code: 'custom', path: ['cashCollected'], message: 'Only full-pay, split-pay or deposit outcomes can add revenue or cash.' })
+  }
+})
 function kpiInputFromRecord(snapshot: KpiSnapshotRecord) {
   return {
     periodStart: snapshot.periodStart,
@@ -916,6 +930,50 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     }
   })
 
+  app.post('/api/kpi-snapshots/:snapshotId/entries', async (request, response) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      const input = kpiCallEntrySchema.parse(request.body)
+      const actor = response.locals.user as PublicUser
+      const now = new Date().toISOString()
+      let snapshot: KpiSnapshotRecord | undefined
+      let entry: KpiCallEntryRecord | undefined
+      await store.update((state) => {
+        const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+        snapshot = workspace?.kpiSnapshots.find((item) => item.id === request.params.snapshotId)
+        if (!snapshot) throw new Error('KPI snapshot not found.')
+        if (input.occurredOn < snapshot.periodStart || input.occurredOn > snapshot.periodEnd) throw new Error('The call date must fall inside the selected KPI period.')
+        entry = { id: `kpi-entry-${randomBytes(8).toString('hex')}`, ...input, createdAt: now, createdBy: actor.name }
+        snapshot.entries = [...(snapshot.entries ?? []), entry]
+        snapshot.updatedAt = now
+      })
+      response.status(201).json({ snapshot, entry })
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(isValidationError(error) ? 400 : /not found/i.test(message) ? 404 : /call date/i.test(message) ? 400 : 403).json({ error: message })
+    }
+  })
+
+  app.delete('/api/kpi-snapshots/:snapshotId/entries/:entryId', async (request, response) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      let snapshot: KpiSnapshotRecord | undefined
+      await store.update((state) => {
+        const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+        snapshot = workspace?.kpiSnapshots.find((item) => item.id === request.params.snapshotId)
+        if (!snapshot) throw new Error('KPI snapshot not found.')
+        const index = (snapshot.entries ?? []).findIndex((item) => item.id === request.params.entryId)
+        if (index < 0) throw new Error('KPI call entry not found.')
+        snapshot.entries?.splice(index, 1)
+        snapshot.updatedAt = new Date().toISOString()
+      })
+      response.json({ snapshot })
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(/not found/i.test(message) ? 404 : 403).json({ error: message })
+    }
+  })
+
   app.patch('/api/kpi-snapshots/:snapshotId', async (request, response) => {
     try {
       auth.requireDataEditor(response.locals.user as PublicUser)
@@ -1131,7 +1189,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     try {
       const provider = providerSchema.parse(request.params.provider)
       const actor = response.locals.user as PublicUser
-      if (provider === 'clickup' || provider === 'quo') auth.requireDataEditor(actor)
+      if (provider === 'clickup' || provider === 'highlevel' || provider === 'quo') auth.requireDataEditor(actor)
       else auth.requireIntegrationManager(actor)
       if (provider === 'google-calendar') return response.status(400).json({ error: 'Use the Google OAuth start endpoint.' })
       const credential = provider === 'stripe'
@@ -1166,7 +1224,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     try {
       const provider = providerSchema.parse(request.params.provider)
       const actor = response.locals.user as PublicUser
-      if (provider === 'clickup' || provider === 'quo') auth.requireDataEditor(actor)
+      if (provider === 'clickup' || provider === 'highlevel' || provider === 'quo') auth.requireDataEditor(actor)
       else auth.requireIntegrationManager(actor)
       await service.disconnect(activeWorkspaceId(response), provider)
       response.json(await service.snapshot(activeWorkspaceId(response)))

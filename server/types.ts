@@ -91,7 +91,7 @@ export type WorkspaceIntegrationState = {
 }
 
 export type RenewalStatus = 'not_started' | 'renewal_opportunity' | 'conversation_needed' | 'call_booked' | 'decision_pending' | 'renewed' | 'declined'
-export type RenewalOutreachKind = 'feedback_request' | 'renewal_invitation' | 'no_response_follow_up'
+export type RenewalOutreachKind = 'feedback_request' | 'renewal_invitation' | 'programme_check_in' | 'webinar_accountability' | 'renewal_window_review' | 'post_completion_review' | 'no_response_follow_up'
 export type RenewalOutreachActivityRecord = {
   id: string
   idempotencyKey?: string
@@ -172,9 +172,24 @@ export type KpiSnapshotRecord = {
   totalRevenue: number
   cashCollected: number
   notes?: string
+  entries?: KpiCallEntryRecord[]
   source: 'manual' | 'clickup' | 'csv'
   createdAt: string
   updatedAt: string
+}
+
+export type KpiCallOutcome = 'full_pay' | 'split_pay' | 'deposit' | 'no_deposit_follow_up' | 'offer_didnt_buy' | 'bad_fit_no_offer' | 'no_show'
+
+export type KpiCallEntryRecord = {
+  id: string
+  occurredOn: string
+  personName: string
+  outcome: KpiCallOutcome
+  revenueValue: number
+  cashCollected: number
+  notes?: string
+  createdAt: string
+  createdBy: string
 }
 
 export type PaymentRecoveryClassification = 'retryable_failure' | 'payment_method_required' | 'authentication_required' | 'secure_payment_link' | 'human_review'

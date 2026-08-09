@@ -10,7 +10,7 @@ import type { KpiSnapshot, KpiSnapshotInput } from './kpiTracking'
 import { renewalApi } from './renewalCommandClient'
 import type { RenewalClient } from './renewalCommand'
 
-const allowedProviders: ProviderId[] = ['clickup', 'quo', 'whop', 'highlevel']
+const allowedProviders: ProviderId[] = ['clickup', 'highlevel', 'quo', 'whop']
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 
 export default function RenewalDataSourcesPage({
@@ -140,7 +140,7 @@ export default function RenewalDataSourcesPage({
     <IntegrationPage
       onWorkspace={onWorkspace}
       canManage={canManage}
-      manageableProviders={canSync ? ['clickup', 'quo'] : []}
+      manageableProviders={canSync ? ['clickup', 'highlevel', 'quo'] : []}
       canSync={canSync}
       allowedProviders={allowedProviders}
       showSandbox={false}
@@ -148,9 +148,9 @@ export default function RenewalDataSourcesPage({
         eyebrow: 'Launch Webinars data',
         title: 'Connect the systems behind renewals.',
         description: canManage
-          ? 'Connect ClickUp, Quo, Whop and GoHighLevel. Credentials are validated server-side and encrypted before they are stored.'
+          ? 'Connect ClickUp, GoHighLevel, Quo and Whop. Credentials are validated server-side and encrypted before they are stored.'
           : canSync
-            ? 'Connect ClickUp and Quo, refresh renewal data or upload the latest exports. A client admin is still required for CRM and payment credentials.'
+            ? 'Connect ClickUp, GoHighLevel and Quo, refresh renewal data or upload the latest exports. A client admin is still required for payment credentials.'
             : 'Review the connected systems and import history behind this workspace.',
       }}
     />

@@ -57,7 +57,7 @@ describe('Version 2 provider adapters', () => {
         { id: 'phone', name: 'Phone (Short Text)', type: 'short_text', value: '(518) 368-4959' },
         { id: 'webinar-1', name: 'Webinar 1 Date', type: 'date', value: String(Date.parse('2026-07-01T12:00:00.000Z')) },
         { id: 'webinar-2', name: 'Webinar 2 Date', type: 'date', value: String(Date.parse('2026-07-20T12:00:00.000Z')) },
-        { id: 'webinar-next', name: 'Webinar NEXT Date', type: 'date', value: String(Date.parse('2026-08-05T12:00:00.000Z')) },
+        { id: 'webinar-next', name: 'Webinar NEXT Date', type: 'date', value: String(Date.parse('2099-08-05T12:00:00.000Z')) },
         { id: 'plan-status', name: 'z Webinar Plan Status z (Drop Down)', type: 'drop_down', value: 'option-active', type_config: { options: [{ id: 'option-active', name: 'In delivery' }] } },
       ],
     }] })) as unknown as typeof fetch
@@ -69,7 +69,7 @@ describe('Version 2 provider adapters', () => {
       phone: '+15183684959',
       firstWebinarAt: '2026-07-01',
       lastWebinarAt: '2026-07-20',
-      nextWebinarAt: '2026-08-05',
+      nextWebinarAt: '2099-08-05',
       webinarsHosted: 2,
       clickUpStatus: 'In delivery',
     })
@@ -426,7 +426,7 @@ describe('Version 2 service boundary', () => {
     } finally { await rm(directory, { recursive: true, force: true }) }
   })
 
-  it('lets managers connect ClickUp without granting access to other provider credentials', async () => {
+  it('lets managers connect operational data sources without granting access to payment credentials', async () => {
     process.env.LEAKLINE_AUTH_ENABLED = 'true'
     process.env.LEAKLINE_INVITE_CODE = 'pilot-secret'
     const directory = await mkdtemp(join(tmpdir(), 'leakline-clickup-manager-'))
@@ -449,12 +449,14 @@ describe('Version 2 service boundary', () => {
       await manager.post('/api/integrations/clickup/disconnect').expect(200)
       await manager.post('/api/integrations/quo/connect').send({ apiKey: 'quo_12345678901234567890', from: '+15551234567' }).expect(200)
       await manager.post('/api/integrations/quo/disconnect').expect(200)
-      await manager.post('/api/integrations/highlevel/connect').send({ accessToken: 'ghl_12345678901234567890', locationId: 'location-123' }).expect(403)
+      await manager.post('/api/integrations/highlevel/connect').send({ accessToken: 'ghl_12345678901234567890', locationId: 'location-123' }).expect(200)
+      await manager.post('/api/integrations/highlevel/disconnect').expect(200)
 
       const viewer = request.agent(app)
       await viewer.post('/api/auth/login').send({ email: 'viewer@example.com', password: 'viewer-pass-123' }).expect(200)
       await viewer.post('/api/integrations/clickup/connect').send({ apiToken: 'pk_12345678901234567890', listId: 'list-123' }).expect(403)
       await viewer.post('/api/integrations/quo/connect').send({ apiKey: 'quo_12345678901234567890', from: '+15551234567' }).expect(403)
+      await viewer.post('/api/integrations/highlevel/connect').send({ accessToken: 'ghl_12345678901234567890', locationId: 'location-123' }).expect(403)
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

@@ -4,7 +4,7 @@ export const INACTIVITY_DAYS = 14
 
 export type RenewalStatus = 'not_started' | 'renewal_opportunity' | 'conversation_needed' | 'call_booked' | 'decision_pending' | 'renewed' | 'declined'
 export type RenewalPipelineStage = 'active_programme' | Exclude<RenewalStatus, 'not_started'>
-export type RenewalOutreachKind = 'feedback_request' | 'renewal_invitation' | 'no_response_follow_up'
+export type RenewalOutreachKind = 'feedback_request' | 'renewal_invitation' | 'programme_check_in' | 'webinar_accountability' | 'renewal_window_review' | 'post_completion_review' | 'no_response_follow_up'
 export type RenewalOutreachActivity = {
   id: string
   direction: 'outbound' | 'inbound'
@@ -103,10 +103,18 @@ export function renewalOutreachAvailability(client: RenewalClient, now = new Dat
   if (['call_booked', 'decision_pending', 'renewed', 'declined'].includes(client.renewalStatus)) {
     return { available: false, reason: 'Outreach stops after a renewal call is booked or the opportunity is closed.' }
   }
-  if (phase !== 'renewal_window' && phase !== 'completion_overdue') {
-    return { available: false, reason: 'Assisted outreach becomes available in the final 30 days of the program.' }
+  if (phase === 'awaiting_activation') {
+    return { available: false, reason: 'Outreach begins after the client completes their first webinar.' }
   }
-  return { available: true, reason: 'Ready for assisted feedback and renewal outreach.' }
+  return { available: true, reason: phase === 'inactive' ? 'Ready for a webinar accountability check-in.' : phase === 'active' ? 'Ready for a client experience check-in.' : 'Ready for assisted feedback and renewal outreach.' }
+}
+
+export function recommendedRenewalOutreachKind(client: RenewalClient, now = new Date()): RenewalOutreachKind {
+  const phase = programmePhase(client, now)
+  if (phase === 'completion_overdue') return 'post_completion_review'
+  if (phase === 'renewal_window') return 'renewal_window_review'
+  if (phase === 'inactive') return 'webinar_accountability'
+  return 'programme_check_in'
 }
 
 export function renewalReadiness(client: RenewalClient, now = new Date()) {
@@ -143,11 +151,13 @@ export function recommendedRenewalAction(client: RenewalClient, now = new Date()
   if (client.renewalStatus === 'decision_pending') return 'Follow up on the renewal decision and record the outcome.'
   if (client.renewalStatus === 'call_booked') return 'Prepare the renewal conversation using webinar usage and client feedback.'
   if (client.renewalStatus === 'conversation_needed') return `Ask ${client.owner} to contact the client and book the renewal conversation.`
+  if (phase === 'completion_overdue') return 'Send the post-completion review and book a progress and next-steps call.'
+  if (phase === 'renewal_window') return 'Send the renewal-window review and book a progress and next-steps call.'
   const inactiveFor = daysSinceLastWebinar(client, now)
   if (phase === 'inactive' || inactiveFor !== undefined && inactiveFor >= INACTIVITY_DAYS) return `Ask ${client.owner} to re-engage the client and schedule their next webinar.`
+  if (phase === 'active' && client.feedbackScore === undefined) return 'Send a program check-in and record the client’s feedback.'
   if (client.feedbackScore === undefined) return 'Collect a feedback score and note before preparing the renewal conversation.'
   if (client.renewalStatus === 'renewal_opportunity') return 'Review the client results and move them into a renewal conversation.'
-  if ((phase === 'renewal_window' || phase === 'completion_overdue') && !client.renewalCallAt) return 'Book the progress and renewal call now.'
   if (renewalReadiness(client, now).label === 'High') return 'Begin personalised renewal nurturing while engagement is strong.'
   return 'Keep webinar participation active and review readiness at the next client check-in.'
 }
@@ -165,11 +175,15 @@ export function renewalPipelineSummary(clients: RenewalClient[], now = new Date(
 }
 
 export function renewalSummary(clients: RenewalClient[], now = new Date()) {
+  const openRenewalStages: RenewalPipelineStage[] = ['renewal_opportunity', 'conversation_needed', 'call_booked', 'decision_pending']
+  const openRenewalClients = clients.filter((client) => openRenewalStages.includes(renewalPipelineStage(client, now)))
+
   return {
     activeClients: clients.filter((client) => ['active', 'inactive', 'renewal_window'].includes(programmePhase(client, now))).length,
     awaitingActivation: clients.filter((client) => programmePhase(client, now) === 'awaiting_activation').length,
-    renewalOpportunities: clients.filter((client) => ['renewal_window', 'completion_overdue'].includes(programmePhase(client, now)) && !['renewed', 'declined'].includes(client.renewalStatus)).length,
+    renewalOpportunities: openRenewalClients.length,
     highReadiness: clients.filter((client) => renewalReadiness(client, now).label === 'High' && !['renewed', 'declined'].includes(client.renewalStatus)).length,
+    renewalPipelineValue: openRenewalClients.reduce((sum, client) => sum + client.expectedRenewalValue, 0),
     renewalCashCollected: clients.reduce((sum, client) => sum + client.renewalCashCollected, 0),
   }
 }

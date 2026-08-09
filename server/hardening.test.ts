@@ -211,6 +211,8 @@ describe.sequential('server hardening', () => {
       expect((await viewer.get('/api/renewal-clients').expect(200)).body.clients[0].name).toBe('Pilot Client')
       await viewer.patch(`/api/renewal-clients/${created.body.client.id}`).send({ feedbackScore: 5 }).expect(403)
       await viewer.delete(`/api/renewal-clients/${created.body.client.id}`).expect(403)
+      await viewer.post(`/api/renewal-clients/${created.body.client.id}/outreach/preview`).send({ channel: 'sms', kind: 'programme_check_in' }).expect(403)
+      await viewer.post(`/api/renewal-clients/${created.body.client.id}/conversation/send`).send({ body: 'Viewer must not send this.', approved: true, idempotencyKey: 'viewer-send-blocked' }).expect(403)
 
       await owner.post('/api/workspaces/active').send({ workspaceId: firstWorkspaceId }).expect(200)
       expect((await owner.get('/api/renewal-clients').expect(200)).body.clients).toEqual([])
@@ -325,16 +327,33 @@ describe.sequential('server hardening', () => {
       expect(imported.body).toMatchObject({ action: 'updated', snapshot: { id: created.body.snapshot.id, source: 'csv', cashCollected: 16_000 } })
       expect((await owner.get('/api/kpi-snapshots').expect(200)).body.snapshots).toHaveLength(1)
 
+      const recorded = await manager.post(`/api/kpi-snapshots/${created.body.snapshot.id}/entries`).send({
+        occurredOn: '2026-07-07',
+        personName: 'Alex Carter',
+        outcome: 'split_pay',
+        revenueValue: 8_000,
+        cashCollected: 2_000,
+        notes: 'Two-part plan agreed.',
+      }).expect(201)
+      expect(recorded.body).toMatchObject({ entry: { personName: 'Alex Carter', createdBy: 'Yonas' }, snapshot: { entries: [{ outcome: 'split_pay' }] } })
+      await manager.post(`/api/kpi-snapshots/${created.body.snapshot.id}/entries`).send({ occurredOn: '2026-07-08', personName: 'Outside Period', outcome: 'no_show', revenueValue: 0, cashCollected: 0 }).expect(400)
+      await manager.post(`/api/kpi-snapshots/${created.body.snapshot.id}/entries`).send({ occurredOn: '2026-07-07', personName: 'Invalid Cash', outcome: 'no_show', revenueValue: 0, cashCollected: 500 }).expect(400)
+
       await owner.post('/api/admin/users').send({ name: 'Launch Viewer', email: 'viewer@example.com', password: 'viewer-pass-123', role: 'viewer', workspaceIds: [launch.body.workspaceId] }).expect(201)
       const viewer = request.agent(app)
       await viewer.post('/api/auth/login').send({ email: 'viewer@example.com', password: 'viewer-pass-123' }).expect(200)
       expect((await viewer.get('/api/kpi-snapshots').expect(200)).body.snapshots[0].cashCollected).toBe(16_000)
       await viewer.post('/api/kpi-snapshots/import').send(payload).expect(403)
+      await viewer.post(`/api/kpi-snapshots/${created.body.snapshot.id}/entries`).send({ occurredOn: '2026-07-07', personName: 'Viewer Entry', outcome: 'no_show', revenueValue: 0, cashCollected: 0 }).expect(403)
+      await viewer.delete(`/api/kpi-snapshots/${created.body.snapshot.id}/entries/${recorded.body.entry.id}`).expect(403)
       await viewer.patch(`/api/kpi-snapshots/${created.body.snapshot.id}`).send({ cashCollected: 16_000 }).expect(403)
       await viewer.delete(`/api/kpi-snapshots/${created.body.snapshot.id}`).expect(403)
 
       await owner.post('/api/workspaces/active').send({ workspaceId: firstWorkspaceId }).expect(200)
       expect((await owner.get('/api/kpi-snapshots').expect(200)).body.snapshots).toEqual([])
+      await owner.post('/api/workspaces/active').send({ workspaceId: launch.body.workspaceId }).expect(200)
+      await owner.delete(`/api/kpi-snapshots/${created.body.snapshot.id}/entries/${recorded.body.entry.id}`).expect(200)
+      expect((await owner.get('/api/kpi-snapshots').expect(200)).body.snapshots[0].entries).toEqual([])
     } finally { await rm(directory, { recursive: true, force: true }) }
   })
 

@@ -123,7 +123,7 @@ function normaliseState(input: Partial<StoreState>): StoreState {
     pilotValidation: { ...defaultPilotValidation(), ...(workspace.pilotValidation ?? {}) },
     renewalClients: (workspace.renewalClients ?? []).map((client) => ({ ...client, renewalStatus: normaliseRenewalStatus(client.renewalStatus), outreach: client.outreach ?? [] })),
     clickUpRenewalImport: workspace.clickUpRenewalImport,
-    kpiSnapshots: workspace.kpiSnapshots ?? [],
+    kpiSnapshots: (workspace.kpiSnapshots ?? []).map((snapshot) => ({ ...snapshot, entries: snapshot.entries ?? [] })),
   }))
   const fallbackWorkspaceId = state.workspaces[0]?.id ?? defaultWorkspaceId
   state.users = (state.users ?? []).map((user, index) => ({
