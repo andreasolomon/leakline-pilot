@@ -1199,7 +1199,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
           : provider === 'fanbasis'
             ? z.object({ webhookSecret: z.string().min(24), accountLabel: z.string().min(2).max(100) }).parse(request.body)
         : provider === 'highlevel'
-          ? z.object({ accessToken: z.string().min(20), locationId: z.string().min(5) }).parse(request.body)
+          ? z.object({ accessToken: z.string().trim().min(20), locationId: z.string().trim().min(5) }).parse(request.body)
           : provider === 'clickup'
             ? z.object({ apiToken: z.string().min(20).regex(/^pk_/, 'Use a ClickUp personal API token beginning with pk_.'), listId: z.string().trim().min(3).max(100).regex(/^[A-Za-z0-9_-]+$/, 'Use the List ID from the ClickUp List URL.') }).parse(request.body)
           : provider === 'quo'

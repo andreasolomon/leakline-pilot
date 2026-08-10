@@ -378,7 +378,22 @@ export function normalizeFanBasisPayment(input: Record<string, unknown>): Normal
   }
 }
 
-const highLevelHeaders = (token: string) => ({ Authorization: `Bearer ${token}`, Accept: 'application/json', Version: '2021-07-28' })
+const highLevelHeaders = (token: string) => ({ Authorization: `Bearer ${token.trim()}`, Accept: 'application/json', Version: '2021-07-28' })
+
+async function highLevelRequest<T>(url: string, init: RequestInit, fetcher: Fetcher): Promise<T> {
+  try {
+    return await jsonRequest<T>(url, init, fetcher)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (/^401\b/.test(message)) {
+      throw new Error('GoHighLevel rejected this token. Create a fresh Private Integration Token inside the same sub-account as this Location ID, then try again.')
+    }
+    if (/^403\b/.test(message)) {
+      throw new Error('The GoHighLevel token is missing required read permissions. Enable Contacts, Opportunities and Users read access for this Private Integration, then try again.')
+    }
+    throw error
+  }
+}
 
 async function highLevelList<T>(initialUrl: string, key: string, headers: Record<string, string>, fetcher: Fetcher) {
   const items: T[] = []
@@ -393,13 +408,21 @@ async function highLevelList<T>(initialUrl: string, key: string, headers: Record
 }
 
 export async function validateHighLevel(credential: HighLevelCredential, fetcher: Fetcher = fetch) {
-  const location = await jsonRequest<{ location?: { name?: string }; name?: string }>(`https://services.leadconnectorhq.com/locations/${encodeURIComponent(credential.locationId)}`, { headers: highLevelHeaders(credential.accessToken) }, fetcher)
-  return { accountLabel: location.location?.name ?? location.name ?? credential.locationId }
+  const headers = highLevelHeaders(credential.accessToken)
+  const rawLocationId = credential.locationId.trim()
+  const locationId = encodeURIComponent(rawLocationId)
+  await Promise.all([
+    highLevelRequest(`https://services.leadconnectorhq.com/contacts/?locationId=${locationId}&limit=1`, { headers }, fetcher),
+    highLevelRequest(`https://services.leadconnectorhq.com/opportunities/search?location_id=${locationId}&limit=1`, { headers }, fetcher),
+    highLevelRequest(`https://services.leadconnectorhq.com/opportunities/pipelines?locationId=${locationId}`, { headers }, fetcher),
+    highLevelRequest(`https://services.leadconnectorhq.com/users/?locationId=${locationId}`, { headers }, fetcher),
+  ])
+  return { accountLabel: `GoHighLevel sub-account · ${rawLocationId}` }
 }
 
 export async function syncHighLevel(credential: HighLevelCredential, fetcher: Fetcher = fetch) {
   const headers = highLevelHeaders(credential.accessToken)
-  const locationId = encodeURIComponent(credential.locationId)
+  const locationId = encodeURIComponent(credential.locationId.trim())
   const [contacts, opportunities, pipelineResult, userResult] = await Promise.all([
     highLevelList<Record<string, unknown>>(`https://services.leadconnectorhq.com/contacts/?locationId=${locationId}&limit=100`, 'contacts', headers, fetcher),
     highLevelList<Record<string, unknown>>(`https://services.leadconnectorhq.com/opportunities/search?location_id=${locationId}&limit=100`, 'opportunities', headers, fetcher),

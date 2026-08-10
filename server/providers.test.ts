@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import request from 'supertest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from './app.js'
-import { syncClickUp, syncFathom, syncGoogleCalendar, syncHighLevel, syncStripe } from './providers.js'
+import { syncClickUp, syncFathom, syncGoogleCalendar, syncHighLevel, syncStripe, validateHighLevel } from './providers.js'
 import { EncryptedStore } from './store.js'
 import { safeErrorMessage } from './safety.js'
 
@@ -45,6 +45,42 @@ describe('Version 2 provider adapters', () => {
     expect(result.leads.rows[0]).toMatchObject({ name: 'Alice', owner: 'Alex Morgan' })
     expect(result.deals.rows[0]).toMatchObject({ stage: 'closed won', value: 12000 })
     expect(result.closers.rows[0]).toMatchObject({ name: 'Alex Morgan', close_rate: 100 })
+  })
+
+  it('validates GoHighLevel against sub-account data endpoints and trims copied credentials', async () => {
+    const fetcher = vi.fn(async () => reply({})) as unknown as typeof fetch
+    const result = await validateHighLevel({ accessToken: '  ghl_private_token  ', locationId: '  location-123  ' }, fetcher)
+
+    expect(result).toEqual({ accountLabel: 'GoHighLevel sub-account · location-123' })
+    expect(fetcher).toHaveBeenCalledTimes(4)
+    expect(fetcher).not.toHaveBeenCalledWith(expect.stringContaining('/locations/location-123'), expect.anything())
+    expect(fetcher).toHaveBeenCalledWith(expect.stringContaining('/contacts/?locationId=location-123&limit=1'), expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: 'Bearer ghl_private_token' }),
+    }))
+  })
+
+  it('turns a GoHighLevel 401 into a safe, useful reconnect instruction', async () => {
+    const fetcher = vi.fn(async () => reply({ statusCode: 401, message: 'Invalid token: access token is invalid', error: 'Unauthorized' }, 401)) as unknown as typeof fetch
+
+    await expect(validateHighLevel({ accessToken: 'expired-token', locationId: 'location-123' }, fetcher))
+      .rejects.toThrow('Create a fresh Private Integration Token inside the same sub-account')
+  })
+
+  it('returns safe GoHighLevel reconnect guidance through the Connect API', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-highlevel-401-'))
+    const fetcher = vi.fn(async () => reply({ statusCode: 401, message: 'Invalid token: access token is invalid', error: 'Unauthorized' }, 401)) as unknown as typeof fetch
+    try {
+      const app = createApp(new EncryptedStore(directory), fetcher)
+      const response = await request(app).post('/api/integrations/highlevel/connect').send({
+        accessToken: 'ghl_private_token_that_must_stay_secret',
+        locationId: 'location-123',
+      }).expect(502)
+
+      expect(response.body.error).toContain('Create a fresh Private Integration Token inside the same sub-account')
+      expect(JSON.stringify(response.body)).not.toContain('ghl_private_token_that_must_stay_secret')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   it('normalizes ClickUp Client Manager tasks and custom webinar fields', async () => {
