@@ -374,6 +374,9 @@ header { height: 65px; background: rgba(252,251,248,.9); border-bottom: 1px soli
 .renewal-client-name,.renewal-programme,.webinar-counter,.renewal-feedback,.renewal-readiness,.renewal-workflow { display: grid; gap: 4px; align-content: center; }
 .renewal-client-name strong,.webinar-counter strong,.renewal-feedback strong,.renewal-workflow strong { font-size: 10px; }
 .renewal-client-name small,.renewal-programme small,.webinar-counter small,.renewal-feedback small,.renewal-workflow small { color: #8c8a83; font-size: 7px; line-height: 1.35; }
+.renewal-programme .campaign-status { width: max-content; border-radius: 999px; padding: 3px 6px; font-weight: 800; }
+.renewal-programme .campaign-status.paused { background: #f6ecda; color: #9b611a; }
+.renewal-programme .campaign-status.do_not_contact { background: #fff0ed; color: #a43c32; }
 .renewal-workflow select { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 7px; background: white; padding: 6px; color: #45443f; font: 700 8px DM Sans; cursor: pointer; outline: 0; }
 .renewal-workflow select:focus { border-color: #78b7a5; box-shadow: 0 0 0 2px #0b8b6818; }
 .renewal-phase { width: max-content; max-width: 100%; border-radius: 999px; padding: 5px 7px; font-size: 7px; font-style: normal; font-weight: 800; white-space: nowrap; }

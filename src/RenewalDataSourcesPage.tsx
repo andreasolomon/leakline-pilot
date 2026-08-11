@@ -177,6 +177,7 @@ export default function RenewalDataSourcesPage({
         <span className="eyebrow"><FileUp size={14} /> ClickUp import preview</span>
         <h2>Review before updating Renewal Command</h2>
         <p>{clickUpPreview.fileName} contains {clickUpPreview.rows.length} valid client records. Nothing is saved until you confirm.</p>
+        <div className="clickup-import-issues"><AlertTriangle size={15} /><div><strong>This import adds or updates clients; it does not remove them.</strong><span>Before outreach, mark anyone Yonas excludes as Paused or Do not contact in Renewal Command.</span></div></div>
         <div className="clickup-preview-summary">
           <article><span>New clients</span><strong>{clickUpChanges.create}</strong><small>Default owner Yonas · $8,000 expected value</small></article>
           <article><span>Updated clients</span><strong>{clickUpChanges.update}</strong><small>Only ClickUp-owned fields change</small></article>

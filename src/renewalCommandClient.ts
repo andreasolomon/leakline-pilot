@@ -23,6 +23,8 @@ export const emptyRenewalClient = (): RenewalClientInput => ({
   renewalStatus: 'not_started',
   expectedRenewalValue: 0,
   renewalCashCollected: 0,
+  outreachStatus: 'eligible',
+  outreachStatusReason: '',
   nextAction: '',
 })
 

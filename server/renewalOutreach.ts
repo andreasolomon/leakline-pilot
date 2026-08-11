@@ -18,7 +18,11 @@ export type RenewalReplySuggestion = {
 }
 
 const dayMs = 86_400_000
+const hourMs = 3_600_000
 const inactivityDays = 14
+const firstFollowUpDelayHours = 48
+const finalFollowUpDelayHours = 72
+const maxNoResponseFollowUps = 2
 const stoppedStatuses = new Set(['call_booked', 'decision_pending', 'renewed', 'declined'])
 
 function text(value: unknown) {
@@ -27,6 +31,13 @@ function text(value: unknown) {
 
 function lower(value: unknown) {
   return text(value).toLowerCase()
+}
+
+export function renewalOptOutReason(value: unknown) {
+  const message = lower(value)
+  if (/\b(wrong number)\b/.test(message)) return 'The recipient reported that this is the wrong number.'
+  if (/\b(stop|unsubscribe|remove me|do not contact|don['’]?t contact)\b/.test(message)) return 'The recipient asked not to receive further messages.'
+  return undefined
 }
 
 function utcDay(value: Date | string) {
@@ -57,6 +68,12 @@ export function renewalOutreachPhase(client: RenewalClientRecord, now = new Date
 }
 
 export function renewalOutreachEligibility(client: RenewalClientRecord, now = new Date()) {
+  if (client.outreachStatus === 'do_not_contact') {
+    return { available: false, reason: client.outreachStatusReason?.trim() || 'This client is marked do not contact.' }
+  }
+  if (client.outreachStatus === 'paused') {
+    return { available: false, reason: client.outreachStatusReason?.trim() || 'This client is paused from the re-engagement campaign.' }
+  }
   if (stoppedStatuses.has(client.renewalStatus)) {
     return { available: false, reason: 'Outreach stops after a renewal call is booked or the opportunity is closed.' }
   }
@@ -154,7 +171,7 @@ export function buildRenewalReplySuggestion(client: RenewalClientRecord, custome
   const name = firstName(client.name)
   const result = (suggestion: Omit<RenewalReplySuggestion, 'sourceMessageId'>) => suggestion
 
-  if (/\b(stop|unsubscribe|remove me|do not contact|don['’]?t contact|wrong number)\b/.test(message)) {
+  if (renewalOptOutReason(message)) {
     return result({
       intent: 'opt_out',
       label: 'Customer wants messages to stop',
@@ -230,13 +247,34 @@ function latestDirection(client: RenewalClientRecord, direction: RenewalOutreach
   return [...(client.outreach ?? [])].filter((item) => item.direction === direction && item.deliveryStatus !== 'failed').sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
 }
 
-function validateKind(client: RenewalClientRecord, kind: RenewalOutreachKind) {
-  if (kind !== 'no_response_follow_up') return
+export function renewalFollowUpReadiness(client: RenewalClientRecord, now = new Date()) {
   const latestOutbound = latestDirection(client, 'outbound')
   const latestInbound = latestDirection(client, 'inbound')
   if (!latestOutbound || latestInbound && latestInbound.createdAt > latestOutbound.createdAt) {
-    throw new Error('A no-response follow-up is only available after an unanswered renewal message.')
+    return { available: false, reason: 'A no-response follow-up is only available after an unanswered renewal message.' }
   }
+  const successfulOutbound = [...(client.outreach ?? [])]
+    .filter((item) => item.direction === 'outbound' && item.deliveryStatus !== 'failed')
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+  let lastOpeningIndex = -1
+  for (let index = successfulOutbound.length - 1; index >= 0; index -= 1) {
+    if (successfulOutbound[index].kind !== 'no_response_follow_up') {
+      lastOpeningIndex = index
+      break
+    }
+  }
+  const followUpCount = successfulOutbound
+    .slice(lastOpeningIndex + 1)
+    .filter((item) => item.kind === 'no_response_follow_up').length
+  if (followUpCount >= maxNoResponseFollowUps) {
+    return { available: false, reason: 'The two-message no-response sequence is complete. Do not send another follow-up.', followUpCount }
+  }
+  const delayHours = followUpCount === 0 ? firstFollowUpDelayHours : finalFollowUpDelayHours
+  const dueAt = new Date(Date.parse(latestOutbound.createdAt) + delayHours * hourMs).toISOString()
+  if (now.getTime() < Date.parse(dueAt)) {
+    return { available: false, reason: `The next no-response follow-up is available after ${dueAt}.`, followUpCount, dueAt }
+  }
+  return { available: true, reason: followUpCount === 0 ? 'Ready for the first no-response follow-up.' : 'Ready for the final close-the-loop message.', followUpCount, dueAt }
 }
 
 export class RenewalOutreachService {
@@ -248,23 +286,34 @@ export class RenewalOutreachService {
     const client = workspace?.renewalClients.find((item) => item.id === clientId)
     if (!workspace || !client) throw new Error('Renewal client not found.')
     const eligibility = renewalOutreachEligibility(client)
-    validateKind(client, input.kind)
     const contact = contactForClient(workspace, client)
     const destination = input.channel === 'sms' ? contact.phone : contact.email
     const simulated = workspace.connections.highlevel?.mode === 'sandbox'
     const highLevelConnected = Boolean(workspace.credentials.highlevel) || simulated
     const quoConnected = Boolean(workspace.credentials.quo) || simulated
     const connected = input.channel === 'sms' ? quoConnected : highLevelConnected
+    let conversationBlockReason: string | undefined
+    if (input.channel === 'sms' && workspace.credentials.quo && destination) {
+      const messages = await listQuoMessages(workspace.credentials.quo, destination, this.fetcher)
+      conversationBlockReason = messages.filter((message) => message.direction === 'inbound').map((message) => renewalOptOutReason(message.body)).find(Boolean)
+      if (!conversationBlockReason && input.kind === 'no_response_follow_up' && messages.at(-1)?.direction === 'inbound') {
+        conversationBlockReason = 'The client has replied in Quo. Continue the conversation instead of sending a no-response follow-up.'
+      }
+    }
+    const followUp = input.kind === 'no_response_follow_up' ? renewalFollowUpReadiness(client) : undefined
+    if (!conversationBlockReason && followUp && !followUp.available) conversationBlockReason = followUp.reason
     const draft = buildRenewalMessage(client, input.kind, eligibility.daysRemaining, workspace.clientName)
     const reason = !eligibility.available
       ? eligibility.reason
-      : !connected
-        ? `Connect ${input.channel === 'sms' ? 'Quo' : 'GoHighLevel'} before sending this draft.`
-        : input.channel === 'email' && !contact.contactId
-          ? 'Match this renewal client to a GoHighLevel contact before sending email.'
-          : !destination
-            ? `Add a ${input.channel === 'sms' ? 'phone number' : 'valid email'} to the matched GoHighLevel contact.`
-            : 'Ready for review and approval.'
+      : conversationBlockReason
+        ? conversationBlockReason
+        : !connected
+          ? `Connect ${input.channel === 'sms' ? 'Quo' : 'GoHighLevel'} before sending this draft.`
+          : input.channel === 'email' && !contact.contactId
+            ? 'Match this renewal client to a GoHighLevel contact before sending email.'
+            : !destination
+              ? `Add a ${input.channel === 'sms' ? 'phone number' : 'valid email'} to the matched GoHighLevel contact.`
+              : 'Ready for review and approval.'
     return {
       ...draft,
       channel: input.channel,
@@ -273,7 +322,7 @@ export class RenewalOutreachService {
       contactMatched: Boolean(contact.contactId),
       highLevelConnected,
       quoConnected,
-      canSend: eligibility.available && connected && Boolean(destination) && (input.channel === 'sms' || Boolean(contact.contactId)),
+      canSend: eligibility.available && !conversationBlockReason && connected && Boolean(destination) && (input.channel === 'sms' || Boolean(contact.contactId)),
       reason,
       daysRemaining: eligibility.daysRemaining,
       phase: eligibility.phase,
@@ -352,11 +401,16 @@ export class RenewalOutreachService {
       })
       const startsRenewalConversation = ['feedback_request', 'renewal_invitation', 'renewal_window_review', 'post_completion_review'].includes(input.kind)
       if (startsRenewalConversation && (updatedClient.renewalStatus === 'not_started' || updatedClient.renewalStatus === 'renewal_opportunity')) updatedClient.renewalStatus = 'conversation_needed'
-      updatedClient.nextAction = input.kind === 'webinar_accountability'
-        ? 'Review the response and confirm the date of the client’s next webinar.'
-        : input.kind === 'programme_check_in'
-          ? 'Review the client response and resolve any delivery issue they raise.'
-          : 'Review the client response and book the progress and renewal call.'
+      const followUp = renewalFollowUpReadiness(updatedClient)
+      updatedClient.nextAction = followUp.followUpCount === maxNoResponseFollowUps
+        ? 'The no-response sequence is complete. Do not send another follow-up; record any later reply or close the opportunity.'
+        : followUp.dueAt
+          ? `Review any reply. If there is none, the next follow-up is available after ${followUp.dueAt}.`
+          : input.kind === 'webinar_accountability'
+            ? 'Review the response and confirm the date of the client’s next webinar.'
+            : input.kind === 'programme_check_in'
+              ? 'Review the client response and resolve any delivery issue they raise.'
+              : 'Review the client response and book the progress and renewal call.'
       updatedClient.updatedAt = new Date().toISOString()
     })
     return { client: updatedClient!, activity: updatedClient!.outreach!.find((item) => item.id === activityId)!, simulated, replayed: false }
@@ -373,6 +427,7 @@ export class RenewalOutreachService {
     if (!credential) throw new Error('Connect Quo before opening SMS history.')
     const messages = await listQuoMessages(credential, contact.phone, this.fetcher)
     const latestMessage = messages.at(-1)
+    const suppressionReason = messages.filter((message) => message.direction === 'inbound').map((message) => renewalOptOutReason(message.body)).find(Boolean)
     const suggestion = latestMessage?.direction === 'inbound'
       ? { ...buildRenewalReplySuggestion(client, latestMessage.body, workspace.clientName), sourceMessageId: latestMessage.id }
       : undefined
@@ -381,10 +436,11 @@ export class RenewalOutreachService {
       participant: contact.phone,
       messages,
       suggestion,
+      suppressionReason,
     }
   }
 
-  async sendConversationMessage(workspaceId: string, clientId: string, input: { body: string; approved: true; idempotencyKey: string }, actor: PublicUser) {
+  async sendConversationMessage(workspaceId: string, clientId: string, input: { body: string; approved: true; idempotencyKey: string; sourceMessageId?: string }, actor: PublicUser) {
     if (!input.approved) throw new Error('Review and approve the exact reply before sending it through Quo.')
     if (/\{\{[^}]+\}\}/.test(input.body)) throw new Error('This SMS contains an unresolved placeholder.')
     const state = await this.store.read()
@@ -393,10 +449,22 @@ export class RenewalOutreachService {
     if (!workspace || !client) throw new Error('Renewal client not found.')
     const existing = (client.outreach ?? []).find((item) => item.idempotencyKey === input.idempotencyKey)
     if (existing) return { client, activity: existing, replayed: true }
+    const eligibility = renewalOutreachEligibility(client)
+    if (!eligibility.available) throw new Error(eligibility.reason)
     const contact = contactForClient(workspace, client)
     if (!contact.phone) throw new Error('Add a mobile number to this renewal client before sending SMS.')
     const credential = workspace.credentials.quo
     if (!credential) throw new Error('Connect Quo before sending SMS.')
+    const messages = await listQuoMessages(credential, contact.phone, this.fetcher)
+    const suppressionReason = messages.filter((message) => message.direction === 'inbound').map((message) => renewalOptOutReason(message.body)).find(Boolean)
+    if (suppressionReason) throw new Error(`${suppressionReason} Further SMS is blocked.`)
+    const latestMessage = messages.at(-1)
+    if (latestMessage?.direction === 'inbound' && input.sourceMessageId !== latestMessage.id) {
+      throw new Error('A newer client reply is available. Refresh the conversation and review a new response before sending.')
+    }
+    if (latestMessage?.direction === 'outbound' && input.sourceMessageId) {
+      throw new Error('This client reply has already been answered. Refresh the conversation before sending again.')
+    }
     const now = new Date().toISOString()
     const activityId = `renewal-outreach-${randomBytes(8).toString('hex')}`
     const latestOutbound = latestDirection(client, 'outbound')

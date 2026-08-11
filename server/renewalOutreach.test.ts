@@ -4,9 +4,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createApp } from './app.js'
-import { buildRenewalMessage, buildRenewalReplySuggestion, RenewalOutreachService, renewalOutreachEligibility, renewalOutreachPhase } from './renewalOutreach.js'
+import { buildRenewalMessage, buildRenewalReplySuggestion, RenewalOutreachService, renewalFollowUpReadiness, renewalOutreachEligibility, renewalOutreachPhase } from './renewalOutreach.js'
 import { EncryptedStore } from './store.js'
-import type { RenewalClientRecord } from './types.js'
+import type { RenewalClientRecord, RenewalOutreachActivityRecord } from './types.js'
 
 const originalAuthDisabled = process.env.LEAKLINE_AUTH_DISABLED
 const originalNodeEnv = process.env.NODE_ENV
@@ -53,6 +53,20 @@ describe.sequential('assisted renewal outreach', () => {
     expect(renewalOutreachEligibility(renewalClient({ firstWebinarAt: dateDaysAgo(20), lastWebinarAt: dateDaysAgo(14) }))).toMatchObject({ available: true, phase: 'inactive' })
     expect(renewalOutreachEligibility(renewalClient({ renewalStatus: 'call_booked' }))).toMatchObject({ available: false })
     expect(renewalOutreachEligibility(renewalClient({ renewalStatus: 'renewed' }))).toMatchObject({ available: false })
+    expect(renewalOutreachEligibility(renewalClient({ outreachStatus: 'paused', outreachStatusReason: 'Not in the approved campaign list.' }))).toMatchObject({ available: false, reason: 'Not in the approved campaign list.' })
+    expect(renewalOutreachEligibility(renewalClient({ outreachStatus: 'do_not_contact' }))).toMatchObject({ available: false, reason: expect.stringMatching(/do not contact/i) })
+  })
+
+  it('enforces a 48-hour first follow-up, a 72-hour final follow-up and a hard two-message cap', () => {
+    const now = new Date('2026-08-11T12:00:00.000Z')
+    const outbound = (id: string, createdAt: string, kind: RenewalOutreachActivityRecord['kind'] = 'post_completion_review') => ({
+      id, direction: 'outbound' as const, channel: 'sms' as const, kind, templateKey: kind, body: 'Campaign message', deliveryStatus: 'sent' as const, createdAt, createdBy: 'Yonas',
+    })
+    expect(renewalFollowUpReadiness(renewalClient({ outreach: [outbound('opening', '2026-08-10T12:01:00.000Z')] }), now)).toMatchObject({ available: false, followUpCount: 0 })
+    expect(renewalFollowUpReadiness(renewalClient({ outreach: [outbound('opening', '2026-08-09T11:59:00.000Z')] }), now)).toMatchObject({ available: true, followUpCount: 0 })
+    expect(renewalFollowUpReadiness(renewalClient({ outreach: [outbound('opening', '2026-08-01T12:00:00.000Z'), outbound('follow-1', '2026-08-09T12:01:00.000Z', 'no_response_follow_up')] }), now)).toMatchObject({ available: false, followUpCount: 1 })
+    expect(renewalFollowUpReadiness(renewalClient({ outreach: [outbound('opening', '2026-08-01T12:00:00.000Z'), outbound('follow-1', '2026-08-08T11:59:00.000Z', 'no_response_follow_up')] }), now)).toMatchObject({ available: true, followUpCount: 1 })
+    expect(renewalFollowUpReadiness(renewalClient({ outreach: [outbound('opening', '2026-08-01T12:00:00.000Z'), outbound('follow-1', '2026-08-04T12:00:00.000Z', 'no_response_follow_up'), outbound('follow-2', '2026-08-08T12:00:00.000Z', 'no_response_follow_up')] }), now)).toMatchObject({ available: false, followUpCount: 2, reason: expect.stringMatching(/sequence is complete/i) })
   })
 
   it('builds genuinely different messages for each client phase', () => {
@@ -168,7 +182,8 @@ describe.sequential('assisted renewal outreach', () => {
       expect(updated.outreach[1]).toMatchObject({ direction: 'inbound', deliveryStatus: 'received' })
       expect(updated.nextAction).toMatch(/review the client reply/i)
 
-      await request(app).post(`/api/renewal-clients/${clientId}/outreach/preview`).send({ channel: 'email', kind: 'no_response_follow_up' }).expect(409)
+      const answered = await request(app).post(`/api/renewal-clients/${clientId}/outreach/preview`).send({ channel: 'email', kind: 'no_response_follow_up' }).expect(200)
+      expect(answered.body).toMatchObject({ canSend: false, reason: expect.stringMatching(/unanswered renewal message/i) })
       await request(app).patch(`/api/renewal-clients/${clientId}`).send({ renewalStatus: 'call_booked' }).expect(200)
       const stopped = await request(app).post(`/api/renewal-clients/${clientId}/outreach/preview`).send({ channel: 'email', kind: 'renewal_invitation' }).expect(200)
       expect(stopped.body).toMatchObject({ canSend: false })
@@ -228,7 +243,7 @@ describe.sequential('assisted renewal outreach', () => {
       ])
       expect(conversation.body.suggestion).toMatchObject({ sourceMessageId: 'AC-in', intent: 'ready_to_continue', body: expect.stringMatching(/what day and time works best/i) })
       await request(app).post(`/api/renewal-clients/${clientId}/conversation/send`).send({ body: 'Absolutely. What time works best?', idempotencyKey: 'quo-reply-unapproved' }).expect(400)
-      const approvedReply = { body: 'Absolutely. What time works best?', approved: true, idempotencyKey: 'quo-conversation-reply' }
+      const approvedReply = { body: 'Absolutely. What time works best?', approved: true, idempotencyKey: 'quo-conversation-reply', sourceMessageId: 'AC-in' }
       const reply = await request(app).post(`/api/renewal-clients/${clientId}/conversation/send`).send(approvedReply).expect(200)
       expect(reply.body.activity).toMatchObject({ templateKey: 'conversation_reply', providerMessageId: 'AC123', deliveryStatus: 'sent' })
       expect(fetcher).toHaveBeenCalledWith('https://api.quo.com/v1/messages', expect.objectContaining({ method: 'POST' }))
@@ -261,7 +276,59 @@ describe.sequential('assisted renewal outreach', () => {
       const activePreview = await request(app).post(`/api/renewal-clients/${active.body.client.id}/outreach/preview`).send({ channel: 'sms', kind: 'programme_check_in' }).expect(200)
       const activeSent = await request(app).post(`/api/renewal-clients/${active.body.client.id}/outreach/send`).send({ channel: 'sms', kind: 'programme_check_in', body: activePreview.body.body, approved: true, idempotencyKey: 'quo-programme-check-in' }).expect(200)
       expect(activeSent.body.client).toMatchObject({ renewalStatus: 'not_started' })
-      expect(activeSent.body.client.nextAction).toMatch(/resolve any delivery issue/i)
+      expect(activeSent.body.client.nextAction).toMatch(/next follow-up is available after/i)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks stale replies and opt-out contacts before Quo can receive a message', async () => {
+    process.env.NODE_ENV = 'test'
+    process.env.LEAKLINE_AUTH_DISABLED = 'true'
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-renewal-suppression-'))
+    let inbound = { id: 'AC-new', text: 'I have a newer question.', createdAt: '2026-08-11T10:05:00.000Z' }
+    const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      if (url.startsWith('https://api.quo.com/v1/messages?') && !init?.method) return new Response(JSON.stringify({ data: [
+        { id: 'AC-out', from: '+15551234567', to: ['+15550000000'], text: 'How has the program been?', status: 'sent', createdAt: '2026-08-11T10:00:00.000Z', conversationId: 'CN123' },
+        { ...inbound, from: '+15550000000', to: ['+15551234567'], status: 'received', conversationId: 'CN123' },
+      ] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      if (url.endsWith('/v1/messages') && init?.method === 'POST') return new Response(JSON.stringify({ data: { id: 'should-not-send' } }), { status: 202, headers: { 'Content-Type': 'application/json' } })
+      return new Response(JSON.stringify({ message: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+    }) as unknown as typeof fetch
+    try {
+      const store = new EncryptedStore(directory)
+      const app = createApp(store, fetcher)
+      const created = await request(app).post('/api/renewal-clients').send({
+        name: 'Pilot Client', email: '', phone: '+15550000000', owner: 'Yonas', firstWebinarAt: dateDaysAgo(70), lastWebinarAt: dateDaysAgo(5), webinarsHosted: 5,
+        feedbackScore: null, feedbackNote: '', renewalCallAt: '', renewalStatus: 'not_started', expectedRenewalValue: 8_000, renewalCashCollected: 0, nextAction: '',
+      }).expect(201)
+      await store.update((state) => {
+        state.workspaces[0].credentials.quo = { apiKey: 'quo-secret', from: '+15551234567', phoneNumberId: 'PN123' }
+        state.workspaces[0].connections.quo = { connectedAt: new Date().toISOString(), accountLabel: 'Renewals', mode: 'live' }
+      })
+      const clientId = created.body.client.id as string
+
+      await request(app).post(`/api/renewal-clients/${clientId}/conversation/send`).send({
+        body: 'Reply based on the old message.', approved: true, idempotencyKey: 'stale-conversation-reply', sourceMessageId: 'AC-old',
+      }).expect(409)
+      expect(fetcher.mock.calls.filter(([input, init]) => String(input) === 'https://api.quo.com/v1/messages' && init?.method === 'POST')).toHaveLength(0)
+
+      await request(app).patch(`/api/renewal-clients/${clientId}`).send({ outreachStatus: 'paused', outreachStatusReason: 'Awaiting campaign approval.' }).expect(200)
+      await request(app).post(`/api/renewal-clients/${clientId}/conversation/send`).send({
+        body: 'A paused client must remain blocked.', approved: true, idempotencyKey: 'blocked-paused-reply', sourceMessageId: 'AC-new',
+      }).expect(409)
+      await request(app).patch(`/api/renewal-clients/${clientId}`).send({ outreachStatus: 'eligible', outreachStatusReason: '' }).expect(200)
+
+      inbound = { id: 'AC-stop', text: 'Please stop messaging me.', createdAt: '2026-08-11T10:10:00.000Z' }
+      const conversation = await request(app).get(`/api/renewal-clients/${clientId}/conversation`).expect(200)
+      expect(conversation.body.suppressionReason).toMatch(/asked not to receive/i)
+      const preview = await request(app).post(`/api/renewal-clients/${clientId}/outreach/preview`).send({ channel: 'sms', kind: 'post_completion_review' }).expect(200)
+      expect(preview.body).toMatchObject({ canSend: false, reason: expect.stringMatching(/asked not to receive/i) })
+      await request(app).post(`/api/renewal-clients/${clientId}/conversation/send`).send({
+        body: 'This must remain blocked.', approved: true, idempotencyKey: 'blocked-opt-out-reply', sourceMessageId: 'AC-stop',
+      }).expect(409)
+      expect(fetcher.mock.calls.filter(([input, init]) => String(input) === 'https://api.quo.com/v1/messages' && init?.method === 'POST')).toHaveLength(0)
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

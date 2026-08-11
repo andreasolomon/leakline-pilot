@@ -202,8 +202,10 @@ describe.sequential('server hardening', () => {
       const created = await owner.post('/api/renewal-clients').send(payload).expect(201)
       expect((await owner.get('/api/renewal-clients').expect(200)).body.clients).toHaveLength(1)
       await owner.patch(`/api/renewal-clients/${created.body.client.id}`).send({ lastWebinarAt: '2026-07-01' }).expect(400)
+      await owner.patch(`/api/renewal-clients/${created.body.client.id}`).send({ outreachStatus: 'paused', outreachStatusReason: 'Awaiting the approved campaign list.' }).expect(200)
       const feedbackCleared = await owner.patch(`/api/renewal-clients/${created.body.client.id}`).send({ feedbackScore: null }).expect(200)
       expect(feedbackCleared.body.client.feedbackScore).toBeUndefined()
+      expect(feedbackCleared.body.client).toMatchObject({ outreachStatus: 'paused', outreachStatusReason: 'Awaiting the approved campaign list.' })
 
       await owner.post('/api/admin/users').send({ name: 'Launch Viewer', email: 'viewer@example.com', password: 'viewer-pass-123', role: 'viewer', workspaceIds: [launch.body.workspaceId] }).expect(201)
       const viewer = request.agent(app)
@@ -243,6 +245,8 @@ describe.sequential('server hardening', () => {
         renewalStatus: 'conversation_needed',
         expectedRenewalValue: 5000,
         renewalCashCollected: 0,
+        outreachStatus: 'paused',
+        outreachStatusReason: 'Excluded from this campaign.',
         nextAction: 'Book the renewal call.',
       }).expect(201)
       await owner.post('/api/admin/users').send({ name: 'Yonas', email: 'yonas@example.com', password: 'manager-pass-123', role: 'manager', workspaceIds: [launch.body.workspaceId] }).expect(201)
@@ -274,9 +278,11 @@ describe.sequential('server hardening', () => {
         feedbackNote: 'Strong results.',
         renewalStatus: 'conversation_needed',
         expectedRenewalValue: 5000,
+        outreachStatus: 'paused',
+        outreachStatusReason: 'Excluded from this campaign.',
         nextAction: 'Book the renewal call.',
       })
-      expect(newClient).toMatchObject({ owner: 'Yonas', expectedRenewalValue: 8000 })
+      expect(newClient).toMatchObject({ owner: 'Yonas', expectedRenewalValue: 8000, outreachStatus: 'eligible' })
       expect(imported.body.clickUpImport).toMatchObject({ importedBy: 'Yonas', acceptedRows: 2 })
 
       const replayed = await manager.post('/api/renewal-clients/import-clickup').send(payload).expect(200)

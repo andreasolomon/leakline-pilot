@@ -89,6 +89,7 @@ const renewalConversationSendSchema = z.object({
   body: z.string().trim().min(1).max(1_600),
   approved: z.literal(true),
   idempotencyKey: z.string().trim().min(8).max(100),
+  sourceMessageId: z.string().trim().min(1).max(200).optional(),
 }).strict()
 const renewalClientFieldsSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -106,6 +107,8 @@ const renewalClientFieldsSchema = z.object({
   renewalStatus: renewalStatusSchema,
   expectedRenewalValue: z.number().min(0).max(100_000_000),
   renewalCashCollected: z.number().min(0).max(100_000_000),
+  outreachStatus: z.enum(['eligible', 'paused', 'do_not_contact']).optional(),
+  outreachStatusReason: z.string().trim().max(500).optional(),
   nextAction: z.string().trim().max(500).optional(),
 }).strict()
 const validateRenewalClient = (client: z.infer<typeof renewalClientFieldsSchema>, context: z.RefinementCtx) => {
@@ -133,6 +136,8 @@ function renewalInputFromRecord(client: RenewalClientRecord) {
     renewalStatus: client.renewalStatus,
     expectedRenewalValue: client.expectedRenewalValue,
     renewalCashCollected: client.renewalCashCollected,
+    outreachStatus: client.outreachStatus ?? 'eligible',
+    outreachStatusReason: client.outreachStatusReason,
     nextAction: client.nextAction,
   }
 }
@@ -803,7 +808,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
       await store.update((state) => {
         const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
         if (!workspace) throw new Error('Workspace not found.')
-        client = { id: `renewal-${randomBytes(8).toString('hex')}`, ...input, outreach: [], source: 'manual', createdAt: now, updatedAt: now }
+        client = { id: `renewal-${randomBytes(8).toString('hex')}`, ...input, outreachStatus: input.outreachStatus ?? 'eligible', outreach: [], source: 'manual', createdAt: now, updatedAt: now }
         workspace.renewalClients.push(client)
       })
       response.status(201).json({ client })

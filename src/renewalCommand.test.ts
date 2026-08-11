@@ -73,6 +73,8 @@ describe('Renewal Command calculations', () => {
     expect(renewalOutreachAvailability(active, now).available).toBe(true)
     expect(renewalOutreachAvailability(inactive, now).available).toBe(true)
     expect(renewalOutreachAvailability(awaitingActivation, now)).toMatchObject({ available: false })
+    expect(renewalOutreachAvailability({ ...active, outreachStatus: 'paused', outreachStatusReason: 'Not approved by Yonas.' }, now)).toMatchObject({ available: false, reason: 'Not approved by Yonas.' })
+    expect(renewalOutreachAvailability({ ...active, outreachStatus: 'do_not_contact' }, now)).toMatchObject({ available: false, reason: expect.stringMatching(/do not contact/i) })
   })
 
   it('automatically moves approaching clients into the renewal-opportunity stage', () => {

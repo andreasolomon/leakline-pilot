@@ -91,6 +91,7 @@ export type WorkspaceIntegrationState = {
 }
 
 export type RenewalStatus = 'not_started' | 'renewal_opportunity' | 'conversation_needed' | 'call_booked' | 'decision_pending' | 'renewed' | 'declined'
+export type RenewalOutreachStatus = 'eligible' | 'paused' | 'do_not_contact'
 export type RenewalOutreachKind = 'feedback_request' | 'renewal_invitation' | 'programme_check_in' | 'webinar_accountability' | 'renewal_window_review' | 'post_completion_review' | 'no_response_follow_up'
 export type RenewalOutreachActivityRecord = {
   id: string
@@ -133,6 +134,8 @@ export type RenewalClientRecord = {
   clickUpTaskId?: string
   clickUpStatus?: string
   crmContactId?: string
+  outreachStatus?: RenewalOutreachStatus
+  outreachStatusReason?: string
   outreach?: RenewalOutreachActivityRecord[]
   createdAt: string
   updatedAt: string

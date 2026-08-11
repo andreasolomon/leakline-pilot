@@ -3,6 +3,7 @@ export const WEBINAR_TARGET = 6
 export const INACTIVITY_DAYS = 14
 
 export type RenewalStatus = 'not_started' | 'renewal_opportunity' | 'conversation_needed' | 'call_booked' | 'decision_pending' | 'renewed' | 'declined'
+export type RenewalOutreachStatus = 'eligible' | 'paused' | 'do_not_contact'
 export type RenewalPipelineStage = 'active_programme' | Exclude<RenewalStatus, 'not_started'>
 export type RenewalOutreachKind = 'feedback_request' | 'renewal_invitation' | 'programme_check_in' | 'webinar_accountability' | 'renewal_window_review' | 'post_completion_review' | 'no_response_follow_up'
 export type RenewalOutreachActivity = {
@@ -55,6 +56,8 @@ export type RenewalClient = {
   clickUpTaskId?: string
   clickUpStatus?: string
   crmContactId?: string
+  outreachStatus?: RenewalOutreachStatus
+  outreachStatusReason?: string
   outreach?: RenewalOutreachActivity[]
   createdAt: string
   updatedAt: string
@@ -100,6 +103,12 @@ export function programmePhase(client: RenewalClient, now = new Date()): Program
 
 export function renewalOutreachAvailability(client: RenewalClient, now = new Date()) {
   const phase = programmePhase(client, now)
+  if (client.outreachStatus === 'do_not_contact') {
+    return { available: false, reason: client.outreachStatusReason?.trim() || 'This client is marked do not contact.' }
+  }
+  if (client.outreachStatus === 'paused') {
+    return { available: false, reason: client.outreachStatusReason?.trim() || 'This client is paused from the re-engagement campaign.' }
+  }
   if (['call_booked', 'decision_pending', 'renewed', 'declined'].includes(client.renewalStatus)) {
     return { available: false, reason: 'Outreach stops after a renewal call is booked or the opportunity is closed.' }
   }

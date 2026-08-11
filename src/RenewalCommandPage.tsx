@@ -86,6 +86,7 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
   const [clients, setClients] = useState<RenewalClient[]>([])
   const [search, setSearch] = useState('')
   const [phaseFilter, setPhaseFilter] = useState<'all' | ProgrammePhase>('all')
+  const [campaignFilter, setCampaignFilter] = useState<'all' | 'eligible' | 'paused' | 'do_not_contact'>('all')
   const [pipelineFilter, setPipelineFilter] = useState<'all' | RenewalPipelineStage>('all')
   const [busy, setBusy] = useState('loading')
   const [error, setError] = useState('')
@@ -106,6 +107,7 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
   const [conversationReply, setConversationReply] = useState('')
   const [conversationApproved, setConversationApproved] = useState(false)
   const [conversationError, setConversationError] = useState('')
+  const [conversationSuppressionReason, setConversationSuppressionReason] = useState('')
   const [conversationBusy, setConversationBusy] = useState('')
   const handledInboundId = useRef('')
   const latestSuggestedInboundId = useRef('')
@@ -132,12 +134,13 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
     .filter((client) => {
       const query = search.trim().toLowerCase()
       return (phaseFilter === 'all' || programmePhase(client) === phaseFilter)
+        && (campaignFilter === 'all' || (client.outreachStatus ?? 'eligible') === campaignFilter)
         && (pipelineFilter === 'all' || renewalPipelineStage(client) === pipelineFilter)
         && (!query || `${client.name} ${client.email ?? ''} ${client.phone ?? ''} ${client.owner} ${client.feedbackNote ?? ''}`.toLowerCase().includes(query))
     })
     .sort((left, right) => phasePriority[programmePhase(left)] - phasePriority[programmePhase(right)]
       || renewalReadiness(right).score - renewalReadiness(left).score
-      || left.name.localeCompare(right.name)), [clients, phaseFilter, pipelineFilter, search])
+      || left.name.localeCompare(right.name)), [campaignFilter, clients, phaseFilter, pipelineFilter, search])
   const feedbackClients = useMemo(() => clients
     .filter((client) => client.feedbackScore !== undefined)
     .sort((left, right) => renewalReadiness(right).score - renewalReadiness(left).score)
@@ -254,8 +257,9 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
     }
     if (!quiet) setConversationBusy('loading')
     try {
-      const result = await renewalApi<{ messages: QuoConversationMessage[]; suggestion?: RenewalReplySuggestion }>(`/api/renewal-clients/${client.id}/conversation`)
+      const result = await renewalApi<{ messages: QuoConversationMessage[]; suggestion?: RenewalReplySuggestion; suppressionReason?: string }>(`/api/renewal-clients/${client.id}/conversation`)
       setQuoMessages(result.messages)
+      setConversationSuppressionReason(result.suppressionReason ?? '')
       if (result.suggestion?.sourceMessageId && result.suggestion.sourceMessageId !== latestSuggestedInboundId.current) {
         latestSuggestedInboundId.current = result.suggestion.sourceMessageId
         setConversationApproved(false)
@@ -283,7 +287,12 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
     try {
       const result = await renewalApi<{ client: RenewalClient }>(`/api/renewal-clients/${outreachClient.id}/conversation/send`, {
         method: 'POST',
-        body: JSON.stringify({ body: conversationReply.trim(), approved: true, idempotencyKey: crypto.randomUUID() }),
+        body: JSON.stringify({
+          body: conversationReply.trim(),
+          approved: true,
+          idempotencyKey: crypto.randomUUID(),
+          sourceMessageId: [...quoMessages].reverse().find((message) => message.direction === 'inbound')?.id,
+        }),
       })
       handledInboundId.current = [...quoMessages].reverse().find((message) => message.direction === 'inbound')?.id ?? ''
       setClients((current) => current.map((client) => client.id === result.client.id ? result.client : client))
@@ -310,6 +319,7 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
     setConversationReply('')
     setConversationApproved(false)
     setConversationError('')
+    setConversationSuppressionReason('')
     handledInboundId.current = ''
     latestSuggestedInboundId.current = ''
     setOutreachOpen(true)
@@ -418,6 +428,12 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
             <option value="all">All program phases</option>
             {Object.entries(phaseLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
+          <select aria-label="Filter by campaign status" value={campaignFilter} onChange={(event) => setCampaignFilter(event.target.value as typeof campaignFilter)}>
+            <option value="all">All campaign statuses</option>
+            <option value="eligible">Eligible</option>
+            <option value="paused">Paused</option>
+            <option value="do_not_contact">Do not contact</option>
+          </select>
         </div>
 
         <div className="renewal-table-wrap">
@@ -429,7 +445,7 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
             const readiness = renewalReadiness(client)
             return <div className="renewal-table renewal-client-row" key={client.id}>
               <span className="renewal-client-name"><strong>{client.name}</strong><small>{client.owner}</small></span>
-              <span className="renewal-programme"><em className={`renewal-phase ${phase}`}>{phaseLabels[phase]}</em><small>{programmeTiming(client)} · ends {formatDate(programmeEndDate(client.firstWebinarAt))}</small></span>
+              <span className="renewal-programme"><em className={`renewal-phase ${phase}`}>{phaseLabels[phase]}</em><small>{programmeTiming(client)} · ends {formatDate(programmeEndDate(client.firstWebinarAt))}</small>{client.outreachStatus && client.outreachStatus !== 'eligible' && <small className={`campaign-status ${client.outreachStatus}`}>{client.outreachStatus === 'paused' ? 'Campaign paused' : 'Do not contact'}</small>}</span>
               <span className="webinar-counter"><strong><Video size={14} /> {client.webinarsHosted}</strong>{canAct && <button disabled={busy === client.id} onClick={() => logWebinar(client)}><Plus size={12} /> Log webinar</button>}<small>Last: {formatDate(client.lastWebinarAt)}</small>{client.nextWebinarAt && <small>Next: {formatDate(client.nextWebinarAt)}</small>}</span>
               <span className="renewal-feedback">{client.feedbackScore !== undefined ? <><strong>{client.feedbackScore}/5</strong><small>{client.feedbackNote || 'No feedback note'}</small></> : <><strong>Not scored</strong><button disabled={!canAct} onClick={() => openEdit(client)}>Add feedback</button></>}</span>
               <span className="renewal-readiness"><strong className={readiness.label.toLowerCase().replace(' ', '-')}>{readiness.label.startsWith('Needs') ? '—' : readiness.score}</strong><small>{readiness.label}</small><em title={readiness.explanation}>{readiness.explanation}</em></span>
@@ -508,6 +524,8 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
           <label>Renewal call<input type="date" value={draft.renewalCallAt ?? ''} onChange={(event) => setDraft({ ...draft, renewalCallAt: event.target.value || undefined })} /></label>
           <label>Expected renewal value<input type="number" min="0" value={draft.expectedRenewalValue} onChange={(event) => setDraft({ ...draft, expectedRenewalValue: Number(event.target.value) })} /></label>
           <label>Renewal cash collected<input type="number" min="0" value={draft.renewalCashCollected} onChange={(event) => setDraft({ ...draft, renewalCashCollected: Number(event.target.value) })} /></label>
+          <label>Campaign status<select value={draft.outreachStatus ?? 'eligible'} onChange={(event) => setDraft({ ...draft, outreachStatus: event.target.value as 'eligible' | 'paused' | 'do_not_contact' })}><option value="eligible">Eligible for outreach</option><option value="paused">Paused</option><option value="do_not_contact">Do not contact</option></select></label>
+          <label>Campaign status reason<input value={draft.outreachStatusReason ?? ''} onChange={(event) => setDraft({ ...draft, outreachStatusReason: event.target.value })} placeholder="For example: Jonas excluded from this campaign" /></label>
           <label className="renewal-note-field">Override next action<textarea value={draft.nextAction ?? ''} onChange={(event) => setDraft({ ...draft, nextAction: event.target.value })} placeholder="Leave blank to use LeakLine's recommended next action." /></label>
         </div></fieldset>
 
@@ -557,6 +575,7 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
             <div><MessageSquareText size={16} /><span><strong>Quo conversation</strong><small>Incoming replies refresh automatically while this drawer is open.</small></span></div>
             <>
               {conversationError && <div className="renewal-conversation-error"><AlertTriangle size={14} /><span>{conversationError}</span></div>}
+              {conversationSuppressionReason && <div className="renewal-conversation-error"><AlertTriangle size={14} /><span>{conversationSuppressionReason} Further SMS is blocked.</span></div>}
               {conversationBusy === 'loading' ? <div className="renewal-conversation-loading"><RefreshCw className="spin" size={16} /> Loading Quo messages…</div> : quoMessages.length ? <div className="quo-message-thread">{quoMessages.map((message) => <article key={message.id} className={message.direction}>
                 <p>{message.body}</p><small>{new Date(message.createdAt).toLocaleString('en-GB')} · {message.status}</small>
               </article>)}</div> : !conversationError && <div className="renewal-outreach-empty"><MessageSquareQuote size={22} /><strong>No Quo messages yet</strong><span>Send the first approved SMS to start this conversation.</span></div>}
@@ -565,12 +584,12 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
                 <p>{replySuggestion.rationale}</p>
                 <blockquote>{replySuggestion.body}</blockquote>
                 <small><strong>Next action:</strong> {replySuggestion.recommendedNextAction}</small>
-                <button type="button" className="secondary-button" onClick={() => { setConversationReply(replySuggestion.body); setConversationApproved(false) }}>Use this editable reply</button>
+                {replySuggestion.intent !== 'opt_out' && <button type="button" className="secondary-button" onClick={() => { setConversationReply(replySuggestion.body); setConversationApproved(false) }}>Use this editable reply</button>}
               </div>}
               <div className="quo-reply-composer">
                 <label>Reply through Quo<textarea maxLength={1600} value={conversationReply} onChange={(event) => { setConversationReply(event.target.value); setConversationApproved(false) }} placeholder="Type the next response or use the suggestion above…" /></label>
-                <label className="renewal-outreach-approval"><input type="checkbox" checked={conversationApproved} onChange={(event) => setConversationApproved(event.target.checked)} /><span>I have reviewed this exact reply and approve sending it.</span></label>
-                <div><small>{conversationReply.length}/1600</small><button type="button" className="primary-button" disabled={!conversationReply.trim() || !conversationApproved || conversationBusy === 'sending' || Boolean(conversationError)} onClick={() => void sendConversationReply()}><Send size={13} /> {conversationBusy === 'sending' ? 'Sending…' : 'Approve and send through Quo'}</button></div>
+                <label className="renewal-outreach-approval"><input type="checkbox" checked={conversationApproved} disabled={Boolean(conversationSuppressionReason)} onChange={(event) => setConversationApproved(event.target.checked)} /><span>I have reviewed this exact reply and approve sending it.</span></label>
+                <div><small>{conversationReply.length}/1600</small><button type="button" className="primary-button" disabled={!conversationReply.trim() || !conversationApproved || conversationBusy === 'sending' || Boolean(conversationError) || Boolean(conversationSuppressionReason)} onClick={() => void sendConversationReply()}><Send size={13} /> {conversationBusy === 'sending' ? 'Sending…' : 'Approve and send through Quo'}</button></div>
               </div>
             </>
           </aside>

@@ -121,7 +121,12 @@ function normaliseState(input: Partial<StoreState>): StoreState {
     })),
     recoveryPolicy: normaliseRecoveryPolicy(workspace.recoveryPolicy, workspace.clientName || workspace.name),
     pilotValidation: { ...defaultPilotValidation(), ...(workspace.pilotValidation ?? {}) },
-    renewalClients: (workspace.renewalClients ?? []).map((client) => ({ ...client, renewalStatus: normaliseRenewalStatus(client.renewalStatus), outreach: client.outreach ?? [] })),
+    renewalClients: (workspace.renewalClients ?? []).map((client) => ({
+      ...client,
+      renewalStatus: normaliseRenewalStatus(client.renewalStatus),
+      outreachStatus: client.outreachStatus === 'paused' || client.outreachStatus === 'do_not_contact' ? client.outreachStatus : 'eligible',
+      outreach: client.outreach ?? [],
+    })),
     clickUpRenewalImport: workspace.clickUpRenewalImport,
     kpiSnapshots: (workspace.kpiSnapshots ?? []).map((snapshot) => ({ ...snapshot, entries: snapshot.entries ?? [] })),
   }))

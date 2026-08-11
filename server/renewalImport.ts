@@ -36,6 +36,7 @@ export function upsertClickUpRenewalClients(workspace: WorkspaceRecord, rows: Cl
         renewalStatus: 'not_started',
         expectedRenewalValue: 8_000,
         renewalCashCollected: 0,
+        outreachStatus: 'eligible',
         outreach: [],
         source: 'clickup',
         clickUpTaskId: row.clickUpTaskId,
