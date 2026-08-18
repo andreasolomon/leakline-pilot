@@ -6,7 +6,13 @@ import type { InviteRecord, StoreState, UserRecord, WorkspaceRecord } from './ty
 
 const scrypt = promisify(scryptCallback)
 const sessionCookieName = 'leakline_session'
-const sessionDays = Math.max(1, Number(process.env.SESSION_DAYS ?? 30))
+
+function configuredDays(value: string | undefined, fallback: number, maximum: number) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(maximum, Math.floor(parsed))) : fallback
+}
+
+const sessionDays = configuredDays(process.env.SESSION_DAYS, 30, 365)
 
 export type UserRole = 'owner' | 'admin' | 'manager' | 'viewer'
 export type InviteRole = Exclude<UserRole, 'owner'>
@@ -22,7 +28,7 @@ const roleLabels: Record<UserRole, string> = { owner: 'Owner', admin: 'Admin', m
 const normaliseEmail = (email: string) => email.trim().toLowerCase()
 const sessionHash = (sessionId: string) => createHash('sha256').update(sessionId).digest('hex')
 const inviteTokenHash = (token: string) => createHash('sha256').update(token).digest('hex')
-const inviteDays = Math.max(1, Number(process.env.INVITE_DAYS ?? 7))
+const inviteDays = configuredDays(process.env.INVITE_DAYS, 7, 30)
 
 function assertPasswordLength(password: string) {
   if (password.length < 10) throw new Error('Password must be at least 10 characters.')
@@ -42,9 +48,13 @@ async function verifyPassword(password: string, salt: string, expectedHash: stri
 }
 
 function parseCookies(header: string | undefined) {
+  const decode = (value: string) => {
+    try { return decodeURIComponent(value) }
+    catch { return value }
+  }
   return Object.fromEntries((header ?? '').split(';').map((part) => {
     const [name, ...value] = part.trim().split('=')
-    return [decodeURIComponent(name ?? ''), decodeURIComponent(value.join('=') ?? '')]
+    return [decode(name ?? ''), decode(value.join('=') ?? '')]
   }).filter(([name]) => name))
 }
 
@@ -427,6 +437,33 @@ export class AuthService {
     })
     if (!updated) throw new Error('User could not be updated.')
     return updated
+  }
+
+  async addWorkspaceMember(actor: PublicUser, workspaceId: string, userId: string) {
+    this.requireWorkspaceAdmin(actor, workspaceId)
+    await this.store.update((state) => {
+      if (!state.workspaces.some((workspace) => workspace.id === workspaceId && !workspace.archivedAt)) throw new Error('Workspace not found.')
+      const user = state.users.find((item) => item.id === userId)
+      if (!user) throw new Error('User not found.')
+      if (!canActorManageUser(actor, user)) throw new Error('You do not have permission to manage this user.')
+      user.workspaceIds = Array.from(new Set([...(user.workspaceIds ?? []), workspaceId]))
+      user.defaultWorkspaceId ??= workspaceId
+    })
+    return { ok: true }
+  }
+
+  async removeWorkspaceMember(actor: PublicUser, workspaceId: string, userId: string) {
+    this.requireWorkspaceAdmin(actor, workspaceId)
+    await this.store.update((state) => {
+      const user = state.users.find((item) => item.id === userId)
+      if (!user) throw new Error('User not found.')
+      if (!canActorManageUser(actor, user)) throw new Error('You do not have permission to manage this user.')
+      if (user.role === 'owner') throw new Error('Owners keep access to every workspace.')
+      user.workspaceIds = (user.workspaceIds ?? []).filter((id) => id !== workspaceId)
+      if (user.defaultWorkspaceId === workspaceId) user.defaultWorkspaceId = user.workspaceIds[0]
+      state.sessions = state.sessions.map((session) => session.userId === user.id && session.activeWorkspaceId === workspaceId ? { ...session, activeWorkspaceId: user.defaultWorkspaceId } : session)
+    })
+    return { ok: true }
   }
 
   async setActiveWorkspace(request: Request, actor: PublicUser, workspaceId: string) {

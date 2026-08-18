@@ -95,13 +95,36 @@ describe('assisted payment recovery', () => {
       const store = new EncryptedStore(directory)
       const app = createApp(store)
       const seeded = await request(app).post('/api/payment-recovery/sample').expect(200)
+      expect(seeded.body.policy.templatesApprovedAt).toBeUndefined()
       const recoveryCase = seeded.body.cases.find((item: { classification: string }) => item.classification === 'retryable_failure')
       await request(app).post(`/api/payment-recovery/cases/${recoveryCase.id}/send`).send({ channel: 'sms', approved: false }).expect(400)
       const preview = await request(app).post(`/api/payment-recovery/cases/${recoveryCase.id}/preview`).send({ channel: 'sms' }).expect(200)
       expect(preview.body.body).toContain('securely here')
-      const sent = await request(app).post(`/api/payment-recovery/cases/${recoveryCase.id}/send`).send({ channel: 'sms', approved: true }).expect(200)
+      const idempotencyKey = 'sample-recovery-send-once'
+      const sent = await request(app).post(`/api/payment-recovery/cases/${recoveryCase.id}/send`).send({ channel: 'sms', approved: true, idempotencyKey }).expect(200)
       expect(sent.body).toMatchObject({ simulated: true })
-      expect(sent.body.case.attempts[0]).toMatchObject({ channel: 'sms', simulated: true })
+      expect(sent.body.case.attempts[0]).toMatchObject({ channel: 'sms', simulated: true, deliveryStatus: 'simulated', idempotencyKey })
+      const replayed = await request(app).post(`/api/payment-recovery/cases/${recoveryCase.id}/send`).send({ channel: 'sms', approved: true, idempotencyKey }).expect(200)
+      expect(replayed.body.replayed).toBe(true)
+      expect(replayed.body.case.attempts.filter((attempt: { idempotencyKey?: string }) => attempt.idempotencyKey === idempotencyKey)).toHaveLength(1)
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  })
+
+  it('never lets sample recovery data replace live cases', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-sample-protection-'))
+    try {
+      const store = new EncryptedStore(directory)
+      const app = createApp(store)
+      await store.update((state) => {
+        const target = workspace([{ id: 'live-payment-1', payment_provider: 'stripe', customer: 'Live Customer', amount: 3200, status: 'failed', due_at: '2026-07-10T00:00:00.000Z' }])
+        state.workspaces[0].workspace = target.workspace
+        reconcilePaymentRecoveryCases(state.workspaces[0], '2026-07-18T12:00:00.000Z')
+      })
+      const before = await request(app).get('/api/payment-recovery').expect(200)
+      expect(before.body.cases).toContainEqual(expect.objectContaining({ sourcePaymentId: 'live-payment-1' }))
+      await request(app).post('/api/payment-recovery/sample').expect(409)
+      const after = await request(app).get('/api/payment-recovery').expect(200)
+      expect(after.body.cases).toEqual(before.body.cases)
     } finally { await rm(directory, { recursive: true, force: true }) }
   })
 

@@ -48,12 +48,13 @@ export class EncryptedPaymentRecoveryRepository implements PaymentRecoveryReposi
     await this.store.update((state) => { reconcilePaymentRecoveryCases(this.workspace(state, workspaceId)) })
   }
 
-  async seedSample(workspaceId: string, actor: string) {
+  async seedSample(workspaceId: string, _actor: string) {
     await this.store.update((state) => {
       const workspace = this.workspace(state, workspaceId)
+      const hasRealCases = workspace.paymentRecoveryCases.some((recoveryCase) => !recoveryCase.sourcePaymentId.includes('_sample_'))
+      const hasLivePaymentSource = (['stripe', 'whop', 'fanbasis'] as const).some((provider) => Boolean(workspace.credentials[provider]) || workspace.connections[provider]?.mode === 'live')
+      if (hasRealCases || hasLivePaymentSource) throw new Error('Sample recovery data cannot replace live payment recovery data.')
       workspace.paymentRecoveryCases = samplePaymentRecoveryCases(workspace.recoveryPolicy)
-      workspace.recoveryPolicy.templatesApprovedAt = new Date().toISOString()
-      workspace.recoveryPolicy.templatesApprovedBy = actor
     })
   }
 
@@ -98,6 +99,7 @@ export class EncryptedPaymentRecoveryRepository implements PaymentRecoveryReposi
       const workspace = this.workspace(state, workspaceId)
       const recoveryCase = workspace.paymentRecoveryCases.find((item) => item.id === caseId)
       if (!recoveryCase) throw new Error('Payment recovery case not found.')
+      if (input.idempotencyKey && recoveryCase.attempts.some((attempt) => attempt.idempotencyKey === input.idempotencyKey)) { updated = recoveryCase; return }
       if (input.providerMessageId && recoveryCase.attempts.some((attempt) => attempt.providerMessageId === input.providerMessageId)) { updated = recoveryCase; return }
       const createdAt = new Date().toISOString()
       const attempt: RecoveryAttemptRecord = { ...input, id: `attempt-${randomBytes(8).toString('hex')}`, createdAt }
@@ -111,7 +113,7 @@ export class EncryptedPaymentRecoveryRepository implements PaymentRecoveryReposi
         recoveryCase.suggestions ??= []
         recoveryCase.suggestions.unshift({ id: `suggestion-${randomBytes(8).toString('hex')}`, triggerAttemptId: attempt.id, intent: analysis.intent, confidence: analysis.confidence, recommendedAction: analysis.recommendedAction, channel, subject: channel === 'email' ? `Re: your ${workspace.recoveryPolicy.businessName} payment` : undefined, body: suggestedReplyForIntent(analysis.intent, recoveryCase, workspace.recoveryPolicy), status: analysis.pauseRoutine ? 'escalated' : 'draft', createdAt, updatedAt: createdAt })
         if (analysis.pauseRoutine) { recoveryCase.status = 'human_intervention'; recoveryCase.escalationReason = analysis.recommendedAction }
-      } else if (input.direction === 'outbound') recoveryCase.lastOutboundAt = createdAt
+      } else if (input.direction === 'outbound' && input.deliveryStatus !== 'pending' && input.deliveryStatus !== 'failed') recoveryCase.lastOutboundAt = createdAt
       recoveryCase.attempts.unshift(attempt)
       recoveryCase.updatedAt = createdAt
       refreshRecoveryWorkflow(recoveryCase, workspace.recoveryPolicy, createdAt)
@@ -195,6 +197,10 @@ export class EncryptedPaymentRecoveryRepository implements PaymentRecoveryReposi
         recoveryCase.recoveredAt = new Date().toISOString()
       } else if (input.status === 'closed_unrecovered') {
         recoveryCase.outcome = { type: 'closed_unrecovered', amount: 0, source: 'manual', note: input.note, recordedAt: new Date().toISOString(), recordedBy: actor }
+        recoveryCase.recoveredAt = undefined
+      } else if (input.status !== undefined) {
+        recoveryCase.outcome = undefined
+        recoveryCase.recoveredAt = undefined
       }
       recoveryCase.updatedAt = new Date().toISOString()
       refreshRecoveryWorkflow(recoveryCase, this.workspace(state, workspaceId).recoveryPolicy, recoveryCase.updatedAt)

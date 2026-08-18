@@ -204,6 +204,7 @@ export type RecoveryFollowUpKind = 'no_response' | 'promise_due'
 
 export type RecoveryAttemptRecord = {
   id: string
+  idempotencyKey?: string
   channel: RecoveryAttemptChannel
   direction: 'outbound' | 'inbound' | 'internal'
   summary: string
@@ -212,6 +213,8 @@ export type RecoveryAttemptRecord = {
   conversationId?: string
   intent?: RecoveryReplyIntent
   simulated?: boolean
+  deliveryStatus?: 'pending' | 'sent' | 'simulated' | 'failed' | 'received' | 'recorded'
+  failureReason?: string
   createdAt: string
   createdBy: string
 }

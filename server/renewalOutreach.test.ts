@@ -46,11 +46,12 @@ function renewalClient(overrides: Partial<RenewalClientRecord> = {}): RenewalCli
 }
 
 describe.sequential('assisted renewal outreach', () => {
-  it('opens after activation, recognises inactivity and stops after a call is booked', () => {
+  it('limits the campaign to approved, recently active clients in their final 30 days', () => {
     expect(renewalOutreachEligibility(renewalClient()).available).toBe(true)
     expect(renewalOutreachEligibility(renewalClient({ firstWebinarAt: undefined }))).toMatchObject({ available: false, phase: 'awaiting_activation' })
-    expect(renewalOutreachEligibility(renewalClient({ firstWebinarAt: dateDaysAgo(20), lastWebinarAt: dateDaysAgo(3) }))).toMatchObject({ available: true, phase: 'active' })
-    expect(renewalOutreachEligibility(renewalClient({ firstWebinarAt: dateDaysAgo(20), lastWebinarAt: dateDaysAgo(14) }))).toMatchObject({ available: true, phase: 'inactive' })
+    expect(renewalOutreachEligibility(renewalClient({ firstWebinarAt: dateDaysAgo(20), lastWebinarAt: dateDaysAgo(3) }))).toMatchObject({ available: false, phase: 'active' })
+    expect(renewalOutreachEligibility(renewalClient({ firstWebinarAt: dateDaysAgo(70), lastWebinarAt: dateDaysAgo(14) }))).toMatchObject({ available: false, phase: 'renewal_window', reason: expect.stringMatching(/recent webinar activity/i) })
+    expect(renewalOutreachEligibility(renewalClient({ firstWebinarAt: dateDaysAgo(100), lastWebinarAt: dateDaysAgo(5) }))).toMatchObject({ available: false, phase: 'completion_overdue', reason: expect.stringMatching(/excluded/i) })
     expect(renewalOutreachEligibility(renewalClient({ renewalStatus: 'call_booked' }))).toMatchObject({ available: false })
     expect(renewalOutreachEligibility(renewalClient({ renewalStatus: 'renewed' }))).toMatchObject({ available: false })
     expect(renewalOutreachEligibility(renewalClient({ outreachStatus: 'paused', outreachStatusReason: 'Not in the approved campaign list.' }))).toMatchObject({ available: false, reason: 'Not in the approved campaign list.' })
@@ -72,9 +73,9 @@ describe.sequential('assisted renewal outreach', () => {
   it('builds genuinely different messages for each client phase', () => {
     const client = renewalClient({ firstWebinarAt: dateDaysAgo(100), lastWebinarAt: dateDaysAgo(20) })
     expect(renewalOutreachPhase(client)).toBe('completion_overdue')
-    expect(buildRenewalMessage(client, 'programme_check_in', 60, 'LaunchWebinars').body).toBe('Hey Pilot, Yonas here from Launch Webinars. Quick check-in: how are things going with the program so far? Is anything getting in the way of your next webinar or the results you’re aiming for?')
-    expect(buildRenewalMessage(client, 'webinar_accountability', 60, 'LaunchWebinars').body).toMatch(/anything blocking you from getting the next one booked/i)
-    expect(buildRenewalMessage(client, 'renewal_window_review', 20, 'LaunchWebinars').body).toMatch(/what would you still like help with before it ends/i)
+    expect(buildRenewalMessage(client, 'programme_check_in', 60, 'LaunchWebinars').body).toBe('Hey Pilot, how’s everything going? You’ve got 5 webinars under your belt now. Is there anything you’re stuck on or need a hand with?')
+    expect(buildRenewalMessage(client, 'webinar_accountability', 60, 'LaunchWebinars').body).toMatch(/anything getting in the way of getting the next one booked/i)
+    expect(buildRenewalMessage(client, 'renewal_window_review', 20, 'LaunchWebinars').body).toBe('Hey Pilot, how’s everything going? You’ve got 5 webinars under your belt now. How are you feeling about the progress so far?')
     expect(buildRenewalMessage(client, 'post_completion_review', -10, 'LaunchWebinars').body).toMatch(/what results did you get from the webinars you ran/i)
   })
 
@@ -82,15 +83,15 @@ describe.sequential('assisted renewal outreach', () => {
     const client = renewalClient({ firstWebinarAt: dateDaysAgo(100), outreach: [{
       id: 'follow-up-1', direction: 'outbound', channel: 'sms', kind: 'no_response_follow_up', templateKey: 'no_response_follow_up', body: 'First follow-up', deliveryStatus: 'sent', createdAt: new Date().toISOString(), createdBy: 'Yonas',
     }] })
-    expect(buildRenewalMessage(renewalClient({ firstWebinarAt: dateDaysAgo(100) }), 'no_response_follow_up', -10, 'LaunchWebinars')).toMatchObject({ templateKey: 'no_response_follow_up', body: expect.stringMatching(/in case my last message got buried/i) })
-    expect(buildRenewalMessage(client, 'no_response_follow_up', -10, 'LaunchWebinars')).toMatchObject({ templateKey: 'no_response_close_loop', body: expect.stringMatching(/last check-in from me/i) })
+    expect(buildRenewalMessage(renewalClient({ firstWebinarAt: dateDaysAgo(70) }), 'no_response_follow_up', 20, 'LaunchWebinars')).toMatchObject({ templateKey: 'no_response_follow_up', body: expect.stringMatching(/just bumping this/i) })
+    expect(buildRenewalMessage(client, 'no_response_follow_up', 20, 'LaunchWebinars')).toMatchObject({ templateKey: 'no_response_close_loop', body: expect.stringMatching(/drop me a message/i) })
   })
 
   it('suggests the next response without forcing ambiguous replies into a renewal pitch', () => {
     const client = renewalClient()
     expect(buildRenewalReplySuggestion(client, 'Yes, I would be interested in continuing.', 'LaunchWebinars')).toMatchObject({
       intent: 'ready_to_continue',
-      body: expect.stringMatching(/what day and time works best/i),
+      body: expect.stringMatching(/quick call.*Yonas/i),
     })
     expect(buildRenewalReplySuggestion(client, 'It was good and we got solid results.', 'LaunchWebinars')).toMatchObject({
       intent: 'positive_feedback',
@@ -98,11 +99,11 @@ describe.sequential('assisted renewal outreach', () => {
     })
     expect(buildRenewalReplySuggestion(client, 'We have struggled with the tech for our webinars.', 'LaunchWebinars')).toMatchObject({
       intent: 'webinar_blocked',
-      body: expect.stringMatching(/main blocker/i),
+      body: expect.stringMatching(/main thing getting in the way/i),
     })
     expect(buildRenewalReplySuggestion(client, 'It is too expensive for us right now.', 'LaunchWebinars')).toMatchObject({
       intent: 'timing_or_budget',
-      body: expect.stringMatching(/budget, timing/i),
+      body: expect.stringMatching(/timing or budget/i),
     })
     expect(buildRenewalReplySuggestion(client, 'I am disappointed and the program did not work as expected.', 'LaunchWebinars')).toMatchObject({
       intent: 'needs_support',
@@ -118,7 +119,7 @@ describe.sequential('assisted renewal outreach', () => {
     })
     expect(buildRenewalReplySuggestion(client, 'Maybe, I am not really sure.', 'LaunchWebinars')).toMatchObject({
       intent: 'unclear',
-      body: expect.stringMatching(/what has gone best/i),
+      body: expect.stringMatching(/what’s gone best/i),
     })
   })
 
@@ -262,7 +263,7 @@ describe.sequential('assisted renewal outreach', () => {
         email: '',
         phone: '+15550000001',
         owner: 'Yonas',
-        firstWebinarAt: dateDaysAgo(20),
+        firstWebinarAt: dateDaysAgo(70),
         lastWebinarAt: dateDaysAgo(3),
         webinarsHosted: 2,
         feedbackScore: null,

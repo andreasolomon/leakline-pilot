@@ -82,12 +82,17 @@ export function renewalOutreachEligibility(client: RenewalClientRecord, now = ne
   if (phase === 'awaiting_activation') {
     return { available: false, reason: 'Outreach begins after the client completes their first webinar.', daysRemaining, phase }
   }
-  const reason = phase === 'inactive'
-    ? 'Ready for a webinar accountability check-in.'
-    : phase === 'active'
-      ? 'Ready for a client experience check-in.'
-      : 'Ready for assisted feedback and renewal outreach.'
-  return { available: true, reason, daysRemaining, phase }
+  if (phase === 'completion_overdue') {
+    return { available: false, reason: 'Completed clients are excluded from the current campaign.', daysRemaining, phase }
+  }
+  if (phase !== 'renewal_window') {
+    return { available: false, reason: 'The current campaign is limited to selected active clients in their final 30 days.', daysRemaining, phase }
+  }
+  const inactiveFor = daysSinceLastWebinar(client, now)
+  if (client.webinarsHosted < 1 || inactiveFor === undefined || inactiveFor >= inactivityDays) {
+    return { available: false, reason: 'This campaign requires recent webinar activity as well as final approval from Launch Webinars.', daysRemaining, phase }
+  }
+  return { available: true, reason: 'Ready for Fred’s approved final-30-day check-in.', daysRemaining, phase }
 }
 
 function contactForClient(workspace: WorkspaceRecord, client: RenewalClientRecord) {
@@ -116,19 +121,30 @@ function timingKey(daysRemaining: number | undefined) {
 
 export function buildRenewalMessage(client: RenewalClientRecord, kind: RenewalOutreachKind, daysRemaining: number | undefined, businessName: string) {
   const displayBusinessName = businessName === 'LaunchWebinars' ? 'Launch Webinars' : businessName
+  const isLaunchWebinars = businessName === 'LaunchWebinars'
+  const name = firstName(client.name)
   const greeting = `Hey ${firstName(client.name)}, ${client.owner} here from ${displayBusinessName}.`
   const inactiveFor = daysSinceLastWebinar(client)
+  const webinarProgress = client.webinarsHosted === 1
+    ? 'You’ve got your first webinar under your belt now'
+    : `You’ve got ${client.webinarsHosted} webinars under your belt now`
   if (kind === 'programme_check_in') {
-    const body = `${greeting} Quick check-in: how are things going with the program so far? Is anything getting in the way of your next webinar or the results you’re aiming for?`
+    const body = isLaunchWebinars
+      ? `Hey ${name}, how’s everything going? ${webinarProgress}. Is there anything you’re stuck on or need a hand with?`
+      : `${greeting} Quick check-in: how are things going with the program so far? Is anything getting in the way of your next webinar or the results you’re aiming for?`
     return { templateKey: 'programme_check_in', subject: 'A quick program check-in', body }
   }
   if (kind === 'webinar_accountability') {
     const timing = inactiveFor === undefined ? 'It looks like your webinar activity may have slowed down.' : `I noticed it’s been ${inactiveFor} days since your last webinar.`
-    const body = `${greeting} ${timing} Is anything blocking you from getting the next one booked? If there is, let me know what it is and we’ll help you get moving again.`
+    const body = isLaunchWebinars
+      ? `Hey ${name}, how’s everything going? ${timing} Is anything getting in the way of getting the next one booked?`
+      : `${greeting} ${timing} Is anything blocking you from getting the next one booked? If there is, let me know what it is and we’ll help you get moving again.`
     return { templateKey: 'webinar_accountability', subject: 'Checking in on your next webinar', body }
   }
   if (kind === 'renewal_window_review') {
-    const body = `${greeting} You’re coming towards the end of your current program period, so I wanted to check in. How has the experience been so far, and what would you still like help with before it ends?`
+    const body = isLaunchWebinars
+      ? `Hey ${name}, how’s everything going? ${webinarProgress}. How are you feeling about the progress so far?`
+      : `${greeting} You’re coming towards the end of your current program period, so I wanted to check in. How has the experience been so far, and what would you still like help with before it ends?`
     return { templateKey: 'renewal_window_review', subject: 'Checking in before your program ends', body }
   }
   if (kind === 'post_completion_review') {
@@ -136,13 +152,17 @@ export function buildRenewalMessage(client: RenewalClientRecord, kind: RenewalOu
     return { templateKey: 'post_completion_review', subject: 'How did the program go?', body }
   }
   if (kind === 'feedback_request') {
-    const body = `${greeting} As you approach the end of your program, I’d really value your honest feedback. What has been most useful so far, and what would you still like help with?`
+    const body = isLaunchWebinars
+      ? `Hey ${name}, wanted to get your honest take on how everything’s been going. What’s been the most useful part for you so far, and is there anything you still need help with?`
+      : `${greeting} As you approach the end of your program, I’d really value your honest feedback. What has been most useful so far, and what would you still like help with?`
     return { templateKey: 'feedback_request', subject: 'A quick check-in on your program', body }
   }
   if (kind === 'no_response_follow_up') {
     const previousFollowUps = (client.outreach ?? []).filter((activity) => activity.direction === 'outbound' && activity.kind === 'no_response_follow_up' && activity.deliveryStatus !== 'failed').length
     if (previousFollowUps > 0) {
-      const body = `${greeting} Last check-in from me. If you’d still like to review your results or talk through what the next step could look like, reply here and I’ll help arrange it. If not, no problem at all.`
+      const body = isLaunchWebinars
+        ? `All good if you’re busy, ${name}. Just wanted to check in before you finish up. Drop me a message when you get a sec.`
+        : `${greeting} Last check-in from me. If you’d still like to review your results or talk through what the next step could look like, reply here and I’ll help arrange it. If not, no problem at all.`
       return { templateKey: 'no_response_close_loop', subject: 'Closing the loop', body }
     }
     const context = daysRemaining !== undefined && daysRemaining < 0
@@ -150,7 +170,9 @@ export function buildRenewalMessage(client: RenewalClientRecord, kind: RenewalOu
       : daysRemaining !== undefined && daysRemaining <= 30
         ? 'Before your current period ends, I’d like to understand what’s worked and what support would be most useful next.'
         : 'I’d like to understand how things are going and whether anything is getting in the way.'
-    const body = `${greeting} Just following up in case my last message got buried. ${context}`
+    const body = isLaunchWebinars
+      ? `Hey ${name}, just bumping this in case it got buried. How are you feeling about everything so far?`
+      : `${greeting} Just following up in case my last message got buried. ${context}`
     return { templateKey: 'no_response_follow_up', subject: 'Following up on my last message', body }
   }
   const timing = timingKey(daysRemaining)
@@ -161,7 +183,9 @@ export function buildRenewalMessage(client: RenewalClientRecord, kind: RenewalOu
       : timing === '14_day'
         ? 'You’re around two weeks from the end of your current program.'
         : 'You’re entering the final 30 days of your current program.'
-  const body = `${greeting} ${context} I’d like to hear how the experience has been and what you want to achieve next. How has it gone from your side?`
+  const body = isLaunchWebinars
+    ? `Hey ${name}, how’s everything going? ${webinarProgress}. What are you looking to build on next?`
+    : `${greeting} ${context} I’d like to hear how the experience has been and what you want to achieve next. How has it gone from your side?`
   return { templateKey: `renewal_invitation_${timing}`, subject: 'Your progress and next steps', body }
 }
 
@@ -169,6 +193,7 @@ export function buildRenewalReplySuggestion(client: RenewalClientRecord, custome
   const message = lower(customerReply)
   const displayBusinessName = businessName === 'LaunchWebinars' ? 'Launch Webinars' : businessName
   const name = firstName(client.name)
+  const isLaunchWebinars = businessName === 'LaunchWebinars'
   const result = (suggestion: Omit<RenewalReplySuggestion, 'sourceMessageId'>) => suggestion
 
   if (renewalOptOutReason(message)) {
@@ -185,7 +210,9 @@ export function buildRenewalReplySuggestion(client: RenewalClientRecord, custome
       intent: 'not_interested',
       label: 'Not interested in continuing',
       rationale: 'The customer appears to be declining rather than asking for more information.',
-      body: `Understood, ${name}. Thanks for being honest. Before I close this out, would you be open to sharing the main reason you don’t want to continue? No pressure—it just helps us improve.`,
+      body: isLaunchWebinars
+        ? `No worries, ${name}, appreciate you being straight with me. Out of interest, what’s the main reason you wouldn’t want to carry on?`
+        : `Understood, ${name}. Thanks for being honest. Before I close this out, would you be open to sharing the main reason you don’t want to continue? No pressure—it just helps us improve.`,
       recommendedNextAction: 'Capture the reason if they respond, then mark the renewal as declined.',
     })
   }
@@ -194,7 +221,9 @@ export function buildRenewalReplySuggestion(client: RenewalClientRecord, custome
       intent: 'timing_or_budget',
       label: 'Timing or budget concern',
       rationale: 'The customer has raised a commercial or timing concern that should be understood before proposing a renewal.',
-      body: `That makes sense, ${name}. Is the main concern budget, timing, or whether another cycle would create enough value? Once I understand which one it is, we can talk through the most sensible option.`,
+      body: isLaunchWebinars
+        ? `Yeah, I get you. Is it more a timing or budget thing right now, or are you unsure another round would be worth it?`
+        : `That makes sense, ${name}. Is the main concern budget, timing, or whether another cycle would create enough value? Once I understand which one it is, we can talk through the most sensible option.`,
       recommendedNextAction: 'Clarify the real objection before offering a call or renewal option.',
     })
   }
@@ -203,7 +232,9 @@ export function buildRenewalReplySuggestion(client: RenewalClientRecord, custome
       intent: 'ready_to_continue',
       label: 'Ready to discuss continuing',
       rationale: 'The customer has shown clear interest in continuing or speaking about the next step.',
-      body: `Great to hear, ${name}. The best next step is a quick call so we can review your results and what continuing should look like. What day and time works best for you?`,
+      body: isLaunchWebinars
+        ? `Love that. Let’s get a quick call in with Yonas and map out what the next phase could look like. What day works best for you?`
+        : `Great to hear, ${name}. The best next step is a quick call so we can review your results and what continuing should look like. What day and time works best for you?`,
       recommendedNextAction: 'Agree a time and record the renewal call in LeakLine.',
     })
   }
@@ -212,7 +243,9 @@ export function buildRenewalReplySuggestion(client: RenewalClientRecord, custome
       intent: 'webinar_blocked',
       label: 'Webinar delivery blocker',
       rationale: 'The customer appears to be struggling to run or progress their webinars.',
-      body: `Thanks for being honest, ${name}. What’s the main blocker right now: time, tech, the offer, or getting people registered? Once I know that, we can help you choose the right next step.`,
+      body: isLaunchWebinars
+        ? `Got you. What’s the main thing getting in the way right now: time, tech, the offer, or getting people registered?`
+        : `Thanks for being honest, ${name}. What’s the main blocker right now: time, tech, the offer, or getting people registered? Once I know that, we can help you choose the right next step.`,
       recommendedNextAction: 'Identify the blocker and assign the right Launch Webinars support action.',
     })
   }
@@ -221,7 +254,9 @@ export function buildRenewalReplySuggestion(client: RenewalClientRecord, custome
       intent: 'needs_support',
       label: 'Needs support or has negative feedback',
       rationale: 'The customer has raised a problem or disappointment that should be understood before discussing renewal.',
-      body: `Thanks for being honest, ${name}. I want to understand that properly. What specifically hasn’t worked the way you expected, and what would you need help fixing first?`,
+      body: isLaunchWebinars
+        ? `Got you, ${name}. What’s been the biggest issue from your side, and what would you want us to help fix first?`
+        : `Thanks for being honest, ${name}. I want to understand that properly. What specifically hasn’t worked the way you expected, and what would you need help fixing first?`,
       recommendedNextAction: 'Resolve or escalate the service issue before moving the conversation towards renewal.',
     })
   }
@@ -230,7 +265,9 @@ export function buildRenewalReplySuggestion(client: RenewalClientRecord, custome
       intent: 'positive_feedback',
       label: 'Positive experience, next goal unknown',
       rationale: 'The customer is positive, but has not yet said whether they want to continue.',
-      body: `That’s great to hear, ${name}. What result are you happiest with, and what would you most like to improve or build on next?`,
+      body: isLaunchWebinars
+        ? `Love that. What result are you happiest with so far, and what do you want to build on next?`
+        : `That’s great to hear, ${name}. What result are you happiest with, and what would you most like to improve or build on next?`,
       recommendedNextAction: 'Use their next goal to decide whether a renewal conversation is relevant.',
     })
   }
@@ -238,7 +275,9 @@ export function buildRenewalReplySuggestion(client: RenewalClientRecord, custome
     intent: 'unclear',
     label: 'More context needed',
     rationale: `The reply is not clear enough for ${displayBusinessName} to assume the customer’s intent safely.`,
-    body: `Thanks for getting back to me, ${name}. What has gone best for you so far, and what would you most like support with next?`,
+    body: isLaunchWebinars
+      ? `Got you. What’s gone best for you so far, and what do you feel you still need help with?`
+      : `Thanks for getting back to me, ${name}. What has gone best for you so far, and what would you most like support with next?`,
     recommendedNextAction: 'Ask one open question before deciding the next renewal action.',
   })
 }
@@ -288,7 +327,7 @@ export class RenewalOutreachService {
     const eligibility = renewalOutreachEligibility(client)
     const contact = contactForClient(workspace, client)
     const destination = input.channel === 'sms' ? contact.phone : contact.email
-    const simulated = workspace.connections.highlevel?.mode === 'sandbox'
+    const simulated = input.channel === 'sms' ? workspace.connections.quo?.mode === 'sandbox' : workspace.connections.highlevel?.mode === 'sandbox'
     const highLevelConnected = Boolean(workspace.credentials.highlevel) || simulated
     const quoConnected = Boolean(workspace.credentials.quo) || simulated
     const connected = input.channel === 'sms' ? quoConnected : highLevelConnected
@@ -343,7 +382,7 @@ export class RenewalOutreachService {
     const preview = await this.preview(workspaceId, clientId, input)
     if (!preview.canSend) throw new Error(preview.reason)
     const contact = contactForClient(workspace, client)
-    const simulated = workspace.connections.highlevel?.mode === 'sandbox'
+    const simulated = input.channel === 'sms' ? workspace.connections.quo?.mode === 'sandbox' : workspace.connections.highlevel?.mode === 'sandbox'
     const now = new Date().toISOString()
     const activityId = `renewal-outreach-${randomBytes(8).toString('hex')}`
     const pending: RenewalOutreachActivityRecord = {

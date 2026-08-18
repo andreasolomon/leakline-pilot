@@ -111,7 +111,7 @@ export function refreshRecoveryWorkflow(recoveryCase: PaymentRecoveryCaseRecord,
       recoveryCase.followUps.push({ id: `follow-up-${promise.id}`, kind: 'promise_due', channel: recoveryCase.customerPhone ? 'sms' : 'email', dueAt: new Date(dueMs).toISOString(), status: dueMs <= nowMs ? 'due' : 'scheduled', attemptNumber: 1, reason: `Promise ${promise.id} passed without a verified payment.`, createdAt: now })
     }
   }
-  const outbound = recoveryCase.attempts.filter((item) => item.direction === 'outbound').sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  const outbound = recoveryCase.attempts.filter((item) => item.direction === 'outbound' && item.deliveryStatus !== 'pending' && item.deliveryStatus !== 'failed').sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   const inbound = recoveryCase.attempts.filter((item) => item.direction === 'inbound').sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   const latestOutbound = outbound[0]
   const latestInbound = inbound[0]
@@ -269,7 +269,7 @@ export function renderRecoveryMessage(template: string, recoveryCase: PaymentRec
 
 export function recoveryReport(cases: PaymentRecoveryCaseRecord[]) {
   const open = cases.filter((item) => item.status !== 'recovered' && item.status !== 'closed_unrecovered')
-  const contacted = cases.filter((item) => item.attempts.some((attempt) => attempt.direction === 'outbound'))
+  const contacted = cases.filter((item) => item.attempts.some((attempt) => attempt.direction === 'outbound' && attempt.deliveryStatus !== 'pending' && attempt.deliveryStatus !== 'failed'))
   const responded = cases.filter((item) => item.attempts.some((attempt) => attempt.direction === 'inbound'))
   const recovered = cases.filter((item) => item.status === 'recovered')
   const recoveryDurations = recovered.map((item) => item.recoveredAt ? Math.max(0, (Date.parse(item.recoveredAt) - Date.parse(item.createdAt)) / 3_600_000) : 0).sort((a, b) => a - b)
@@ -292,7 +292,7 @@ export function recoveryReport(cases: PaymentRecoveryCaseRecord[]) {
     followUpsDue: cases.reduce((sum, item) => sum + (item.followUps?.filter((followUp) => followUp.kind === 'no_response' && followUp.status === 'due').length ?? 0), 0),
     promisesDue: cases.reduce((sum, item) => sum + (item.followUps?.filter((followUp) => followUp.kind === 'promise_due' && followUp.status === 'due').length ?? 0), 0),
     assistedRepliesSent: cases.reduce((sum, item) => sum + (item.suggestions?.filter((suggestion) => suggestion.status === 'sent').length ?? 0), 0),
-    recoveredAfterAssistance: recovered.filter((item) => item.attempts.some((attempt) => attempt.direction === 'outbound')).reduce((sum, item) => sum + (item.outcome?.amount ?? 0), 0),
+    recoveredAfterAssistance: recovered.filter((item) => item.attempts.some((attempt) => attempt.direction === 'outbound' && attempt.deliveryStatus !== 'pending' && attempt.deliveryStatus !== 'failed')).reduce((sum, item) => sum + (item.outcome?.amount ?? 0), 0),
     byClassification,
   }
 }

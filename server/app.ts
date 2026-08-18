@@ -398,7 +398,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
         return response.status(200).json({ ok: true, ignored: 'duplicate_message' })
       }
       const candidates = workspace.paymentRecoveryCases.filter((item) => item.contactId === input.contactId && !['recovered', 'closed_unrecovered'].includes(item.status))
-      const latestOutboundAt = (item: typeof candidates[number]) => item.attempts.filter((attempt) => attempt.direction === 'outbound').map((attempt) => attempt.createdAt).sort().at(-1) ?? item.updatedAt
+      const latestOutboundAt = (item: typeof candidates[number]) => item.attempts.filter((attempt) => attempt.direction === 'outbound' && attempt.deliveryStatus !== 'pending' && attempt.deliveryStatus !== 'failed').map((attempt) => attempt.createdAt).sort().at(-1) ?? item.updatedAt
       const exactRecoveryCase = candidates.find((item) => input.conversationId && item.conversationId === input.conversationId)
       const renewalCandidates = workspace.renewalClients.filter((client) => client.crmContactId === input.contactId && !['call_booked', 'decision_pending', 'renewed', 'declined'].includes(client.renewalStatus))
       const exactRenewalClient = renewalCandidates.find((client) => input.conversationId && client.outreach?.some((activity) => activity.conversationId === input.conversationId))
@@ -411,7 +411,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
         ?? [...candidates].sort((left, right) => latestOutboundAt(right).localeCompare(latestOutboundAt(left)))[0]
       if (!recoveryCase) {
         const latestRenewalClient = [...renewalCandidates].sort((left, right) => {
-          const latest = (client: typeof renewalCandidates[number]) => client.outreach?.filter((activity) => activity.direction === 'outbound').map((activity) => activity.createdAt).sort().at(-1) ?? client.updatedAt
+          const latest = (client: typeof renewalCandidates[number]) => client.outreach?.filter((activity) => activity.direction === 'outbound' && activity.deliveryStatus !== 'pending' && activity.deliveryStatus !== 'failed').map((activity) => activity.createdAt).sort().at(-1) ?? client.updatedAt
           return latest(right).localeCompare(latest(left))
         })[0]
         if (!latestRenewalClient) return response.status(200).json({ ok: true, ignored: 'outreach_record_not_found' })
@@ -423,7 +423,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
       await recoveryRepository.addAttempt(workspace.id, recoveryCase.id, { channel, direction: 'inbound', summary: 'Customer response received through GoHighLevel.', body: input.body, providerMessageId, conversationId: input.conversationId, createdBy: recoveryCase.customerName })
       response.status(202).json({ ok: true, caseId: recoveryCase.id })
     } catch (error) {
-      response.status(error instanceof z.ZodError ? 400 : 200).json({ ok: false, error: safeErrorMessage(error) })
+      response.status(error instanceof z.ZodError ? 400 : 500).json({ ok: false, error: safeErrorMessage(error) })
     }
   })
 
@@ -543,7 +543,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
   })
 
   app.post('/api/payment-recovery/cases/:caseId/send', async (request, response, next) => {
-    try { auth.requireDataEditor(response.locals.user as PublicUser); const input = z.object({ channel: z.enum(['sms', 'email']), approved: z.literal(true) }).parse(request.body); response.json(await paymentRecovery.send(activeWorkspaceId(response), request.params.caseId, input.channel, input.approved, response.locals.user as PublicUser)) } catch (error) { next(error) }
+    try { auth.requireDataEditor(response.locals.user as PublicUser); const input = z.object({ channel: z.enum(['sms', 'email']), approved: z.literal(true), idempotencyKey: z.string().trim().min(8).max(100).optional() }).parse(request.body); response.json(await paymentRecovery.send(activeWorkspaceId(response), request.params.caseId, input.channel, input.approved, response.locals.user as PublicUser, input.idempotencyKey ?? `payment-${randomBytes(12).toString('hex')}`)) } catch (error) { next(error) }
   })
 
   app.post('/api/payment-recovery/cases/:caseId/follow-ups/:followUpId/prepare', async (request, response, next) => {
@@ -551,7 +551,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
   })
 
   app.post('/api/payment-recovery/cases/:caseId/suggestions/:suggestionId/send', async (request, response, next) => {
-    try { auth.requireDataEditor(response.locals.user as PublicUser); const input = z.object({ body: z.string().min(2).max(5000), subject: z.string().max(180).optional(), approved: z.literal(true) }).parse(request.body); response.json(await paymentRecovery.sendSuggestion(activeWorkspaceId(response), request.params.caseId, request.params.suggestionId, input, response.locals.user as PublicUser)) } catch (error) { next(error) }
+    try { auth.requireDataEditor(response.locals.user as PublicUser); const input = z.object({ body: z.string().min(2).max(5000), subject: z.string().max(180).optional(), approved: z.literal(true), idempotencyKey: z.string().trim().min(8).max(100).optional() }).parse(request.body); response.json(await paymentRecovery.sendSuggestion(activeWorkspaceId(response), request.params.caseId, request.params.suggestionId, { ...input, idempotencyKey: input.idempotencyKey ?? `payment-${randomBytes(12).toString('hex')}` }, response.locals.user as PublicUser)) } catch (error) { next(error) }
   })
 
   app.patch('/api/payment-recovery/cases/:caseId/suggestions/:suggestionId', async (request, response, next) => {
@@ -717,16 +717,8 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
 
   app.post('/api/workspaces/:workspaceId/members', async (request, response) => {
     try {
-      auth.requireWorkspaceAdmin(response.locals.user as PublicUser, request.params.workspaceId)
       const input = z.object({ userId: z.string().min(1) }).parse(request.body)
-      await store.update((state) => {
-        if (!state.workspaces.some((workspace) => workspace.id === request.params.workspaceId && !workspace.archivedAt)) throw new Error('Workspace not found.')
-        const user = state.users.find((item) => item.id === input.userId)
-        if (!user) throw new Error('User not found.')
-        user.workspaceIds = Array.from(new Set([...(user.workspaceIds ?? []), request.params.workspaceId]))
-        user.defaultWorkspaceId ??= request.params.workspaceId
-      })
-      response.json({ ok: true })
+      response.json(await auth.addWorkspaceMember(response.locals.user as PublicUser, request.params.workspaceId, input.userId))
     } catch (error) {
       response.status(error instanceof z.ZodError ? 400 : 403).json({ error: safeErrorMessage(error) })
     }
@@ -734,16 +726,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
 
   app.delete('/api/workspaces/:workspaceId/members/:userId', async (request, response) => {
     try {
-      auth.requireWorkspaceAdmin(response.locals.user as PublicUser, request.params.workspaceId)
-      await store.update((state) => {
-        const user = state.users.find((item) => item.id === request.params.userId)
-        if (!user) throw new Error('User not found.')
-        if (user.role === 'owner') throw new Error('Owners keep access to every workspace.')
-        user.workspaceIds = (user.workspaceIds ?? []).filter((id) => id !== request.params.workspaceId)
-        if (user.defaultWorkspaceId === request.params.workspaceId) user.defaultWorkspaceId = user.workspaceIds[0]
-        state.sessions = state.sessions.map((session) => session.userId === user.id && session.activeWorkspaceId === request.params.workspaceId ? { ...session, activeWorkspaceId: user.defaultWorkspaceId } : session)
-      })
-      response.json({ ok: true })
+      response.json(await auth.removeWorkspaceMember(response.locals.user as PublicUser, request.params.workspaceId, request.params.userId))
     } catch (error) {
       response.status(403).json({ error: safeErrorMessage(error) })
     }
@@ -1265,7 +1248,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     const message = error instanceof z.ZodError ? error.issues.map((issue) => issue.message).join(', ') : safeErrorMessage(error)
     const permissionDenied = /access required|access denied|permission|owner access|manager access|admin access/i.test(message)
     const notFound = /not found/i.test(message)
-    const stateConflict = /no longer|already|paused|reached|unresolved placeholder|approve .* before|cannot exceed/i.test(message)
+    const stateConflict = /no longer|already|paused|reached|unresolved placeholder|approve .* before|cannot exceed|cannot replace|recipient/i.test(message)
     const payloadTooLarge = (error as { status?: number }).status === 413
     response.status(error instanceof z.ZodError ? 400 : payloadTooLarge ? 413 : permissionDenied ? 403 : notFound ? 404 : stateConflict ? 409 : 502).json({ error: message })
   })

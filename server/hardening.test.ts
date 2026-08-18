@@ -103,6 +103,39 @@ describe.sequential('server hardening', () => {
     finally { await rm(directory, { recursive: true, force: true }) }
   })
 
+  it('treats a malformed session cookie as unauthenticated instead of crashing', async () => {
+    process.env.NODE_ENV = 'test'
+    process.env.LEAKLINE_AUTH_ENABLED = 'true'
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-malformed-cookie-'))
+    try {
+      const result = await request(createApp(new EncryptedStore(directory)))
+        .get('/api/auth/me')
+        .set('Cookie', 'leakline_session=%E0%A4%A')
+        .expect(200)
+      expect(result.body.user).toBeNull()
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  })
+
+  it('does not let a workspace admin add or remove another admin', async () => {
+    process.env.NODE_ENV = 'test'
+    process.env.LEAKLINE_AUTH_ENABLED = 'true'
+    process.env.LEAKLINE_INVITE_CODE = 'pilot-secret'
+    const directory = await mkdtemp(join(tmpdir(), 'leakline-admin-member-scope-'))
+    try {
+      const app = createApp(new EncryptedStore(directory))
+      const owner = request.agent(app)
+      const signedUp = await owner.post('/api/auth/signup').send({ name: 'Andrea', email: 'owner@example.com', password: 'secure-pass-123', inviteCode: 'pilot-secret' }).expect(201)
+      const firstWorkspaceId = signedUp.body.user.workspaceId as string
+      const second = await owner.post('/api/workspaces').send({ name: 'Second client', clientName: 'Second Client LLC' }).expect(201)
+      const firstAdmin = await owner.post('/api/admin/users').send({ name: 'First Admin', email: 'first-admin@example.com', password: 'first-admin-pass', role: 'admin', workspaceIds: [firstWorkspaceId] }).expect(201)
+      const secondAdmin = await owner.post('/api/admin/users').send({ name: 'Second Admin', email: 'second-admin@example.com', password: 'second-admin-pass', role: 'admin', workspaceIds: [second.body.workspaceId] }).expect(201)
+      const admin = request.agent(app)
+      await admin.post('/api/auth/login').send({ email: 'first-admin@example.com', password: 'first-admin-pass' }).expect(200)
+      await admin.post(`/api/workspaces/${firstWorkspaceId}/members`).send({ userId: secondAdmin.body.user.id }).expect(403)
+      await admin.delete(`/api/workspaces/${firstWorkspaceId}/members/${firstAdmin.body.user.id}`).expect(403)
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  })
+
   it('defaults new users to the active workspace and scopes OAuth callbacks', async () => {
     process.env.NODE_ENV = 'test'
     process.env.LEAKLINE_AUTH_ENABLED = 'true'
@@ -282,7 +315,12 @@ describe.sequential('server hardening', () => {
         outreachStatusReason: 'Excluded from this campaign.',
         nextAction: 'Book the renewal call.',
       })
-      expect(newClient).toMatchObject({ owner: 'Yonas', expectedRenewalValue: 8000, outreachStatus: 'eligible' })
+      expect(newClient).toMatchObject({
+        owner: 'Yonas',
+        expectedRenewalValue: 8000,
+        outreachStatus: 'paused',
+        outreachStatusReason: 'Awaiting the approved Launch Webinars campaign list.',
+      })
       expect(imported.body.clickUpImport).toMatchObject({ importedBy: 'Yonas', acceptedRows: 2 })
 
       const replayed = await manager.post('/api/renewal-clients/import-clickup').send(payload).expect(200)

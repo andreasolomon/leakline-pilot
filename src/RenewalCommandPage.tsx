@@ -549,10 +549,8 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
 
             <div className="renewal-outreach-controls">
               <label>Message purpose<select value={outreachKind} onChange={(event) => changeOutreachDraft(event.target.value as RenewalOutreachKind)}>
-                <option value="programme_check_in">Check in with active client</option>
-                <option value="webinar_accountability">Re-engage inactive client</option>
-                <option value="renewal_window_review">Open end-of-program conversation</option>
-                <option value="post_completion_review">Re-engage completed client</option>
+                <option value="renewal_window_review">Warm progress check-in</option>
+                <option value="feedback_request">Ask for feedback</option>
                 <option value="no_response_follow_up">Follow up after no reply</option>
               </select></label>
               <label>Channel<span className="renewal-channel-display"><Smartphone size={14} /> SMS via Quo</span></label>
