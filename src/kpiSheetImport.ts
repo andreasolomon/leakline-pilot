@@ -4,6 +4,8 @@ import type { KpiSnapshotInput } from './kpiTracking'
 export type KpiSheetPreview = {
   fileName: string
   sourceRows: number
+  format: 'gross_totals' | 'onboarding_tracker'
+  appointmentRows?: number
   input?: KpiSnapshotInput
   issues: string[]
   matchedFields: string[]
@@ -35,9 +37,17 @@ function numberValue(value: string) {
   return Number.isFinite(parsed) ? (negative ? -parsed : parsed) : undefined
 }
 
-function isoDate(value: string) {
+function isoDate(value: string, dayFirst = false) {
   const trimmed = value.trim()
   if (!trimmed) return undefined
+  const localDate = /^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/.exec(trimmed)
+  if (dayFirst && localDate) {
+    const [, day, month, year] = localDate
+    const candidate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+    const parsed = new Date(`${candidate}T00:00:00.000Z`)
+    if (parsed.getUTCFullYear() === Number(year) && parsed.getUTCMonth() + 1 === Number(month) && parsed.getUTCDate() === Number(day)) return candidate
+    return undefined
+  }
   const timestamp = Date.parse(trimmed)
   return Number.isNaN(timestamp) ? undefined : new Date(timestamp).toISOString().slice(0, 10)
 }
@@ -54,10 +64,68 @@ function findValue(rows: string[][], candidates: readonly string[], preferredCol
   return undefined
 }
 
+function parseOnboardingTracker(fileName: string, rows: string[][]): KpiSheetPreview | undefined {
+  const headerIndex = rows.findIndex((row) => {
+    const cells = row.map(clean)
+    return cells.includes('date') && cells.includes('name') && cells.includes('outcome_of_the_call')
+  })
+  if (headerIndex < 0) return undefined
+
+  const header = rows[headerIndex].map(clean)
+  const dateColumn = header.indexOf('date')
+  const nameColumn = header.indexOf('name')
+  const outcomeColumn = header.indexOf('outcome_of_the_call')
+  const issues: string[] = []
+  const appointments: Array<{ date: string; outcome: string }> = []
+  const allowedOutcomes = new Set(['no_show', 'rescheduled', 'showed_up_started', 'showed_up_did_not_convert'])
+
+  rows.slice(headerIndex + 1).forEach((row, index) => {
+    const sourceRow = headerIndex + index + 2
+    const rawDate = row[dateColumn]?.trim() ?? ''
+    const name = row[nameColumn]?.trim() ?? ''
+    const outcome = clean(row[outcomeColumn] ?? '')
+    if (!rawDate && !name && !outcome) return
+    const date = isoDate(rawDate, true)
+    if (!date) issues.push(`Row ${sourceRow} has an invalid date.`)
+    if (!name) issues.push(`Row ${sourceRow} is missing the client name.`)
+    if (!allowedOutcomes.has(outcome)) issues.push(`Row ${sourceRow} has an unsupported call outcome.`)
+    if (date && name && allowedOutcomes.has(outcome)) appointments.push({ date, outcome })
+  })
+
+  if (!appointments.length && !issues.length) issues.push('No appointment rows were found below the onboarding tracker headings.')
+  const dates = appointments.map((appointment) => appointment.date).sort()
+  const callsTaken = appointments.filter((appointment) => appointment.outcome === 'showed_up_started' || appointment.outcome === 'showed_up_did_not_convert').length
+  const deals = appointments.filter((appointment) => appointment.outcome === 'showed_up_started').length
+
+  return {
+    fileName,
+    sourceRows: Math.max(0, rows.length - headerIndex - 1),
+    format: 'onboarding_tracker',
+    appointmentRows: appointments.length,
+    issues,
+    matchedFields: ['Booked Calls', 'Calls Taken', 'Deals'],
+    input: issues.length || !dates.length ? undefined : {
+      periodStart: dates[0],
+      periodEnd: dates[dates.length - 1],
+      bookedCalls: appointments.length,
+      callsTaken,
+      deals,
+      refunds: 0,
+      totalRevenue: 0,
+      cashCollected: 0,
+      financialsPending: true,
+      notes: `Imported from ${fileName}. Calculated from ${appointments.length} onboarding appointment rows. Refunds, revenue and cash were not included and remain pending.`,
+    },
+  }
+}
+
 export function parseKpiSheetCsv(fileName: string, text: string, now = new Date()): KpiSheetPreview {
   const rows = parseCsv(text)
   const sourceRows = Math.max(0, rows.length - 1)
-  if (!rows.length) return { fileName, sourceRows, issues: ['The KPI file is empty.'], matchedFields: [] }
+  if (!rows.length) return { fileName, sourceRows, format: 'gross_totals', issues: ['The KPI file is empty.'], matchedFields: [] }
+
+  const onboardingTracker = parseOnboardingTracker(fileName, rows)
+  if (onboardingTracker) return onboardingTracker
 
   const firstRow = rows[0].map(clean)
   const grossTotalsColumn = firstRow.findIndex((value) => value === 'gross_totals' || value === 'gross_total')
@@ -82,7 +150,7 @@ export function parseKpiSheetCsv(fileName: string, text: string, now = new Date(
     }
   }
 
-  if (issues.length) return { fileName, sourceRows, issues, matchedFields }
+  if (issues.length) return { fileName, sourceRows, format: 'gross_totals', issues, matchedFields }
 
   const periodStartRaw = findValue(rows, ['period_start', 'start_date', 'from'])
   const periodEndRaw = findValue(rows, ['period_end', 'end_date', 'to'])
@@ -90,6 +158,7 @@ export function parseKpiSheetCsv(fileName: string, text: string, now = new Date(
   return {
     fileName,
     sourceRows,
+    format: 'gross_totals',
     issues,
     matchedFields,
     input: {

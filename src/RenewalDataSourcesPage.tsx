@@ -165,7 +165,7 @@ export default function RenewalDataSourcesPage({
         </article>
         <article className="panel manual-source-card">
           <span className="manual-source-icon"><BarChart3 size={20} /></span>
-          <div><span className="eyebrow">Gross Totals</span><h3>KPI Tracking CSV</h3><p>Reads Booked Calls, Calls Taken, Deals, Refunds, Total Revenue and Cash Collected from the Gross Totals section.</p></div>
+          <div><span className="eyebrow">Sales performance</span><h3>KPI Tracking CSV</h3><p>Accepts the Gross Totals sheet or the row-based Onboarding Call Tracker and calculates its appointment outcomes automatically.</p></div>
           {canSync ? <><input ref={kpiInput} className="clickup-file-input" type="file" accept=".csv,text/csv" onChange={chooseKpiFile} /><button className="secondary-button" onClick={() => kpiInput.current?.click()}><FileUp size={14} /> Upload KPI CSV</button></> : <small>Read-only access</small>}
         </article>
       </div>
@@ -198,15 +198,17 @@ export default function RenewalDataSourcesPage({
         <button className="modal-close" disabled={busy === 'kpi'} onClick={() => setKpiPreview(null)}><X size={18} /></button>
         <span className="eyebrow"><BarChart3 size={14} /> KPI sheet preview</span>
         <h2>Confirm the reporting period</h2>
-        <p>LeakLine found all six Gross Totals in {kpiPreview.fileName}. Choose the dates these figures cover before saving.</p>
+        <p>{kpiPreview.format === 'onboarding_tracker'
+          ? `LeakLine calculated these totals from ${kpiPreview.appointmentRows} appointment rows in ${kpiPreview.fileName}. Confirm the dates before saving.`
+          : `LeakLine found all six Gross Totals in ${kpiPreview.fileName}. Choose the dates these figures cover before saving.`}</p>
         <div className="kpi-import-dates"><label>Period start<input type="date" value={kpiDraft.periodStart} onChange={(event) => setKpiDraft({ ...kpiDraft, periodStart: event.target.value })} /></label><label>Period end<input type="date" value={kpiDraft.periodEnd} onChange={(event) => setKpiDraft({ ...kpiDraft, periodEnd: event.target.value })} /></label></div>
         <div className="kpi-import-summary">
           <article><span>Booked calls</span><strong>{kpiDraft.bookedCalls}</strong></article>
           <article><span>Calls taken</span><strong>{kpiDraft.callsTaken}</strong></article>
           <article><span>Deals</span><strong>{kpiDraft.deals}</strong></article>
-          <article><span>Refunds</span><strong>{kpiDraft.refunds}</strong></article>
-          <article><span>Total revenue</span><strong>{money.format(kpiDraft.totalRevenue)}</strong></article>
-          <article><span>Cash collected</span><strong>{money.format(kpiDraft.cashCollected)}</strong></article>
+          <article><span>Refunds</span><strong>{kpiDraft.financialsPending ? 'Pending' : kpiDraft.refunds}</strong></article>
+          <article><span>Total revenue</span><strong>{kpiDraft.financialsPending ? 'Pending' : money.format(kpiDraft.totalRevenue)}</strong></article>
+          <article><span>Cash collected</span><strong>{kpiDraft.financialsPending ? 'Pending' : money.format(kpiDraft.cashCollected)}</strong></article>
         </div>
         <label>Import note<textarea value={kpiDraft.notes ?? ''} onChange={(event) => setKpiDraft({ ...kpiDraft, notes: event.target.value })} /></label>
         <div className="renewal-editor-actions"><button className="ghost-button" disabled={busy === 'kpi'} onClick={() => setKpiPreview(null)}>Cancel</button><button className="primary-button" disabled={busy === 'kpi'} onClick={() => void importKpis()}>{busy === 'kpi' ? <><RefreshCw className="spin" size={15} /> Importing…</> : <><FileUp size={15} /> Import KPI period</>}</button></div>
