@@ -1,11 +1,12 @@
 import { randomBytes } from 'node:crypto'
 import type { EncryptedStore } from './store.js'
 import type { CredentialMap, ProviderId, ProviderStatus, StoreState, WorkspaceRecord } from './types.js'
-import { syncClickUp, syncFathom, syncGoogleCalendar, syncHighLevel, syncStripe, syncWhop, validateClickUp, validateFathom, validateHighLevel, validateQuo, validateStripe, validateWhop } from './providers.js'
+import { syncClickUp, syncFathom, syncGoogleCalendar, syncHighLevel, syncStripe, syncWhop, syncZoomCoachingAttendance, validateClickUp, validateFathom, validateHighLevel, validateQuo, validateStripe, validateWhop, validateZoom } from './providers.js'
 import { safeErrorMessage } from './safety.js'
 import { sandboxSync } from './sandbox.js'
 import { reconcilePaymentRecoveryCases } from './paymentRecovery.js'
 import { upsertClickUpRenewalClients } from './renewalImport.js'
+import { reconcileHighLevelKpi } from './highLevelKpi.js'
 
 const definitions: Array<Pick<ProviderStatus, 'id' | 'label' | 'category' | 'description'>> = [
   { id: 'clickup', label: 'ClickUp', category: 'Client delivery', description: 'Client records, webinar activity and program status from one List.' },
@@ -16,6 +17,7 @@ const definitions: Array<Pick<ProviderStatus, 'id' | 'label' | 'category' | 'des
   { id: 'whop', label: 'Whop', category: 'Payments', description: 'Payment plans, failed charges, retry state and recovered payments.' },
   { id: 'fanbasis', label: 'FanBasis', category: 'Payments', description: 'Payment-plan events through a signed recovery webhook bridge.' },
   { id: 'fathom', label: 'Fathom', category: 'Calls', description: 'Recorded calls, participants, summaries and transcripts.' },
+  { id: 'zoom', label: 'Zoom', category: 'Coaching attendance', description: 'Completed coaching sessions and verified participant attendance.' },
 ]
 
 export class IntegrationService {
@@ -60,11 +62,23 @@ export class IntegrationService {
       ;(credential as CredentialMap['quo']).phoneNumberId = quoValidation.phoneNumberId
       validation = quoValidation
     }
+    else if (provider === 'zoom') validation = await validateZoom(credential as CredentialMap['zoom'], this.fetcher)
     else validation = await validateFathom(credential as CredentialMap['fathom'], this.fetcher)
     await this.store.update((state) => {
       const workspace = this.getWorkspace(state, workspaceId)
       ;(workspace.credentials as Record<string, unknown>)[provider] = credential
       workspace.connections[provider] = { connectedAt: new Date().toISOString(), accountLabel: validation.accountLabel, recordCounts: {}, mode: 'live' }
+    })
+    return validation
+  }
+
+  async connectZoom(workspaceId: string, credential: CredentialMap['zoom'], meetingId: string) {
+    const validation = await validateZoom(credential, this.fetcher, meetingId)
+    await this.store.update((state) => {
+      const workspace = this.getWorkspace(state, workspaceId)
+      workspace.credentials.zoom = credential
+      workspace.connections.zoom = { connectedAt: new Date().toISOString(), accountLabel: validation.accountLabel, recordCounts: {}, mode: 'live' }
+      workspace.coachingAttendance.settings.meetingId = meetingId.replace(/\D/g, '')
     })
     return validation
   }
@@ -78,6 +92,7 @@ export class IntegrationService {
       if (provider === 'highlevel') { delete workspace.workspace.leads; delete workspace.workspace.deals; delete workspace.workspace.closers }
       if (provider === 'google-calendar') delete workspace.workspace.appointments
       if (provider === 'fathom') workspace.calls = []
+      if (provider === 'zoom') workspace.coachingAttendance.sessions = []
     })
   }
 
@@ -120,12 +135,34 @@ export class IntegrationService {
         await this.store.update((next) => { const target = this.getWorkspace(next, workspaceId); reconcilePaymentRecoveryCases(target); this.markSynced(target, provider, { payments: target.workspace.payments?.rows.filter((row) => row.payment_provider === 'fanbasis').length ?? 0 }) })
       } else if (provider === 'highlevel') {
         const result = await syncHighLevel(credential as CredentialMap['highlevel'], this.fetcher)
-        await this.store.update((next) => { const target = this.getWorkspace(next, workspaceId); Object.assign(target.workspace, result); reconcilePaymentRecoveryCases(target); this.markSynced(target, provider, { leads: result.leads.rows.length, deals: result.deals.rows.length, closers: result.closers.rows.length }) })
+        await this.store.update((next) => {
+          const target = this.getWorkspace(next, workspaceId)
+          target.workspace.leads = result.leads
+          target.workspace.deals = result.deals
+          target.workspace.closers = result.closers
+          reconcileHighLevelKpi(target, result.highLevelKpi)
+          reconcilePaymentRecoveryCases(target)
+          this.markSynced(target, provider, { leads: result.leads.rows.length, deals: result.deals.rows.length, closers: result.closers.rows.length })
+        })
       } else if (provider === 'google-calendar') {
         const config = this.googleConfig(workspace)
         if (!config) throw new Error('Google OAuth credentials are not configured. Open Google Calendar in Integrations and add the app client ID and client secret first.')
         const result = await syncGoogleCalendar(credential as CredentialMap['google-calendar'], config.clientId, config.clientSecret, this.fetcher)
         await this.store.update((next) => { const target = this.getWorkspace(next, workspaceId); target.credentials['google-calendar'] = result.credential; target.workspace.appointments = result.appointments; this.markSynced(target, provider, { appointments: result.appointments.rows.length }) })
+      } else if (provider === 'zoom') {
+        const meetingId = workspace.coachingAttendance.settings.meetingId
+        if (!meetingId) throw new Error('Add the recurring Zoom meeting ID before syncing coaching attendance.')
+        const sessions = await syncZoomCoachingAttendance(credential as CredentialMap['zoom'], meetingId, this.fetcher)
+        await this.store.update((next) => {
+          const target = this.getWorkspace(next, workspaceId)
+          const byId = new Map(target.coachingAttendance.sessions.map((session) => [session.id, session]))
+          for (const session of sessions) byId.set(session.id, session)
+          target.coachingAttendance.sessions = [...byId.values()].sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt))
+          this.markSynced(target, provider, {
+            coachingSessions: target.coachingAttendance.sessions.length,
+            coachingParticipants: target.coachingAttendance.sessions.reduce((sum, session) => sum + session.participants.length, 0),
+          })
+        })
       } else {
         const calls = await syncFathom(credential as CredentialMap['fathom'], this.fetcher)
         await this.store.update((next) => { const target = this.getWorkspace(next, workspaceId); target.calls = calls; this.markSynced(target, provider, { calls: calls.length }) })
@@ -141,12 +178,17 @@ export class IntegrationService {
   }
 
   async syncSandbox(workspaceId: string, provider: ProviderId) {
-    if (provider === 'clickup' || provider === 'quo') throw new Error(`${provider === 'clickup' ? 'ClickUp' : 'Quo'} sample sync is not available. Connect the live workspace instead.`)
+    if (provider === 'clickup' || provider === 'quo' || provider === 'zoom') throw new Error(`${provider === 'zoom' ? 'Zoom' : provider === 'clickup' ? 'ClickUp' : 'Quo'} sample sync is not available. Connect the live workspace instead.`)
     const result = await sandboxSync(provider)
     await this.store.update((state) => {
       const workspace = this.getWorkspace(state, workspaceId)
       if ((provider === 'stripe' || provider === 'whop' || provider === 'fanbasis') && result.workspace.payments) { this.mergePaymentProvider(workspace, provider, result.workspace.payments); reconcilePaymentRecoveryCases(workspace) }
-      if (provider === 'highlevel') { workspace.workspace.leads = result.workspace.leads; workspace.workspace.deals = result.workspace.deals; workspace.workspace.closers = result.workspace.closers }
+      if (provider === 'highlevel') {
+        workspace.workspace.leads = result.workspace.leads
+        workspace.workspace.deals = result.workspace.deals
+        workspace.workspace.closers = result.workspace.closers
+        if (result.highLevelKpi) reconcileHighLevelKpi(workspace, result.highLevelKpi)
+      }
       if (provider === 'google-calendar') workspace.workspace.appointments = result.workspace.appointments
       if (provider === 'fathom') workspace.calls = result.calls ?? []
       workspace.connections[provider] = { connectedAt: workspace.connections[provider]?.connectedAt ?? new Date().toISOString(), lastSyncAt: new Date().toISOString(), accountLabel: result.accountLabel, recordCounts: result.recordCounts, mode: 'sandbox' }

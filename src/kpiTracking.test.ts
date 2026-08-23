@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { calculateKpis, compareKpiValue, effectiveKpiSnapshot, kpiCallEntryImpact, sortKpiSnapshots, type KpiSnapshot } from './kpiTracking'
+import { calculateKpis, compareKpiValue, effectiveKpiSnapshot, kpiCallEntryImpact, projectKpiSnapshotToMonthEnd, sortKpiSnapshots, type KpiSnapshot } from './kpiTracking'
 
 const snapshot = (overrides: Partial<KpiSnapshot> = {}): KpiSnapshot => ({
   id: 'kpi-1',
@@ -67,5 +67,12 @@ describe('KPI Tracking calculations', () => {
     expect(compareKpiValue(0, 0)).toBe(0)
     expect(compareKpiValue(10, 0)).toBeUndefined()
     expect(compareKpiValue(10, undefined)).toBeUndefined()
+  })
+
+  it('projects month-to-date pace without fabricating pending financials', () => {
+    const projected = projectKpiSnapshotToMonthEnd(snapshot({ periodStart: '2026-08-01', periodEnd: '2026-08-15', bookedCalls: 12, callsTaken: 8, deals: 4, financialsPending: true }), new Date('2026-08-20T12:00:00.000Z'))
+    expect(projected).toMatchObject({ elapsedDays: 15, totalDays: 31, bookedCalls: 25, callsTaken: 17, deals: 8 })
+    expect(projected?.cashCollected).toBeUndefined()
+    expect(projected?.totalRevenue).toBeUndefined()
   })
 })

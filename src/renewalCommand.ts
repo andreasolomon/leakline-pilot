@@ -5,7 +5,21 @@ export const INACTIVITY_DAYS = 14
 export type RenewalStatus = 'not_started' | 'renewal_opportunity' | 'conversation_needed' | 'call_booked' | 'decision_pending' | 'renewed' | 'declined'
 export type RenewalOutreachStatus = 'eligible' | 'paused' | 'do_not_contact'
 export type RenewalPipelineStage = 'active_programme' | Exclude<RenewalStatus, 'not_started'>
-export type RenewalOutreachKind = 'feedback_request' | 'renewal_invitation' | 'programme_check_in' | 'webinar_accountability' | 'renewal_window_review' | 'post_completion_review' | 'no_response_follow_up'
+export type RenewalOutreachKind = 'feedback_request' | 'renewal_invitation' | 'programme_check_in' | 'webinar_accountability' | 'renewal_window_review' | 'post_completion_review' | 'no_response_follow_up' | 'va_upsell_opener'
+export type UpsellCampaignStage = 'not_contacted' | 'opener_sent' | 'replied' | 'interest_confirmed' | 'call_offered' | 'call_booked' | 'call_attended' | 'won' | 'lost'
+export type UpsellCampaignTracking = {
+  openerSentAt?: string
+  repliedAt?: string
+  interestConfirmedAt?: string
+  callOfferedAt?: string
+  callBookedAt?: string
+  callAttendedAt?: string
+  outcome?: 'won' | 'lost'
+  outcomeAt?: string
+  nonProceedReason?: string
+  updatedAt?: string
+  updatedBy?: string
+}
 export type RenewalOutreachActivity = {
   id: string
   direction: 'outbound' | 'inbound'
@@ -34,6 +48,18 @@ export const RENEWAL_PIPELINE_STAGES: Array<{ id: RenewalPipelineStage; label: s
   { id: 'declined', label: 'Declined' },
 ]
 
+export const UPSELL_CAMPAIGN_STAGES: Array<{ id: UpsellCampaignStage; label: string }> = [
+  { id: 'not_contacted', label: 'Not contacted' },
+  { id: 'opener_sent', label: 'Opener sent' },
+  { id: 'replied', label: 'Replied' },
+  { id: 'interest_confirmed', label: 'Interest confirmed' },
+  { id: 'call_offered', label: 'Call offered' },
+  { id: 'call_booked', label: 'Call booked' },
+  { id: 'call_attended', label: 'Call attended' },
+  { id: 'won', label: 'Upsell won' },
+  { id: 'lost', label: 'Upsell lost' },
+]
+
 export type RenewalClient = {
   id: string
   name: string
@@ -59,6 +85,7 @@ export type RenewalClient = {
   outreachStatus?: RenewalOutreachStatus
   outreachStatusReason?: string
   outreach?: RenewalOutreachActivity[]
+  upsellCampaign?: UpsellCampaignTracking
   createdAt: string
   updatedAt: string
 }
@@ -191,6 +218,31 @@ export function renewalPipelineSummary(clients: RenewalClient[], now = new Date(
       value: stageClients.reduce((sum, client) => sum + (stage === 'renewed' ? client.renewalCashCollected : client.expectedRenewalValue), 0),
     }
   })
+}
+
+export function upsellCampaignStage(client: RenewalClient): UpsellCampaignStage {
+  const campaign = client.upsellCampaign
+  if (campaign?.outcome) return campaign.outcome
+  if (campaign?.callAttendedAt) return 'call_attended'
+  if (campaign?.callBookedAt) return 'call_booked'
+  if (campaign?.callOfferedAt) return 'call_offered'
+  if (campaign?.interestConfirmedAt) return 'interest_confirmed'
+  if (campaign?.repliedAt) return 'replied'
+  if (campaign?.openerSentAt) return 'opener_sent'
+  return 'not_contacted'
+}
+
+export function upsellCampaignSummary(clients: RenewalClient[]) {
+  return {
+    openerSent: clients.filter((client) => Boolean(client.upsellCampaign?.openerSentAt)).length,
+    replied: clients.filter((client) => Boolean(client.upsellCampaign?.repliedAt)).length,
+    interestConfirmed: clients.filter((client) => Boolean(client.upsellCampaign?.interestConfirmedAt)).length,
+    callOffered: clients.filter((client) => Boolean(client.upsellCampaign?.callOfferedAt)).length,
+    callBooked: clients.filter((client) => Boolean(client.upsellCampaign?.callBookedAt)).length,
+    callAttended: clients.filter((client) => Boolean(client.upsellCampaign?.callAttendedAt)).length,
+    won: clients.filter((client) => client.upsellCampaign?.outcome === 'won').length,
+    lost: clients.filter((client) => client.upsellCampaign?.outcome === 'lost').length,
+  }
 }
 
 export function renewalSummary(clients: RenewalClient[], now = new Date()) {

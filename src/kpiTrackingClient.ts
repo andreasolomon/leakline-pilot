@@ -18,11 +18,22 @@ export const emptyKpiSnapshot = (): KpiSnapshotInput => {
     refunds: 0,
     totalRevenue: 0,
     cashCollected: 0,
+    financialsPending: false,
     notes: '',
   }
 }
 
 export function inputFromKpiSnapshot(snapshot: KpiSnapshot): KpiSnapshotInput {
-  const { id: _id, source: _source, createdAt: _createdAt, updatedAt: _updatedAt, ...input } = snapshot
-  return input
+  return {
+    periodStart: snapshot.periodStart,
+    periodEnd: snapshot.periodEnd,
+    bookedCalls: snapshot.bookedCalls,
+    callsTaken: snapshot.callsTaken,
+    deals: snapshot.deals,
+    refunds: snapshot.refunds,
+    totalRevenue: snapshot.totalRevenue,
+    cashCollected: snapshot.cashCollected,
+    financialsPending: snapshot.financialsPending,
+    notes: snapshot.notes,
+  }
 }

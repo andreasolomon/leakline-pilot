@@ -1,4 +1,4 @@
-import type { CallRecord, ClickUpCredential, ClickUpRenewalRow, DatasetImport, FathomCredential, GoogleCredential, HighLevelCredential, NormalizedRow, QuoCredential, StripeCredential, WhopCredential } from './types.js'
+import type { CallRecord, ClickUpCredential, ClickUpRenewalRow, CoachingParticipantRecord, CoachingSessionRecord, DatasetImport, FathomCredential, GoogleCredential, HighLevelCredential, HighLevelOpportunitySyncRecord, HighLevelPipelineStageRecord, NormalizedRow, QuoCredential, StripeCredential, WhopCredential, ZoomCredential } from './types.js'
 
 type Fetcher = typeof fetch
 const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -426,10 +426,16 @@ export async function syncHighLevel(credential: HighLevelCredential, fetcher: Fe
   const [contacts, opportunities, pipelineResult, userResult] = await Promise.all([
     highLevelList<Record<string, unknown>>(`https://services.leadconnectorhq.com/contacts/?locationId=${locationId}&limit=100`, 'contacts', headers, fetcher),
     highLevelList<Record<string, unknown>>(`https://services.leadconnectorhq.com/opportunities/search?location_id=${locationId}&limit=100`, 'opportunities', headers, fetcher),
-    jsonRequest<{ pipelines?: Array<{ stages?: Array<{ id: string; name: string }> }> }>(`https://services.leadconnectorhq.com/opportunities/pipelines?locationId=${locationId}`, { headers }, fetcher),
+    jsonRequest<{ pipelines?: Array<{ id?: string; name?: string; stages?: Array<{ id: string; name: string }> }> }>(`https://services.leadconnectorhq.com/opportunities/pipelines?locationId=${locationId}`, { headers }, fetcher),
     jsonRequest<{ users?: Array<Record<string, unknown>> }>(`https://services.leadconnectorhq.com/users/?locationId=${locationId}`, { headers }, fetcher),
   ])
-  const stages = new Map((pipelineResult.pipelines ?? []).flatMap((pipeline) => pipeline.stages ?? []).map((stage) => [stage.id, stage.name]))
+  const stageCatalog: HighLevelPipelineStageRecord[] = (pipelineResult.pipelines ?? []).flatMap((pipeline) => (pipeline.stages ?? []).map((stage) => ({
+    pipelineId: String(pipeline.id ?? ''),
+    pipelineName: String(pipeline.name ?? 'Unnamed pipeline'),
+    stageId: String(stage.id ?? ''),
+    stageName: String(stage.name ?? 'Unnamed stage'),
+  })))
+  const stages = new Map(stageCatalog.map((stage) => [stage.stageId, stage]))
   const users = userResult.users ?? []
   const userNames = new Map(users.map((user) => {
     const name = String(user.name ?? '').trim() || `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || String(user.email ?? 'Unassigned')
@@ -439,7 +445,8 @@ export async function syncHighLevel(credential: HighLevelCredential, fetcher: Fe
   const deals = opportunities.map((opportunity) => {
     const status = String(opportunity.status ?? 'open').toLowerCase()
     const contact = opportunity.contact as Record<string, unknown> | undefined
-    return { id: String(opportunity.id ?? ''), lead_id: String(opportunity.contactId ?? ''), name: String(opportunity.name ?? contact?.name ?? 'Opportunity'), stage: status === 'won' ? 'closed won' : status === 'lost' ? 'closed lost' : stages.get(String(opportunity.pipelineStageId ?? '')) ?? status, value: Number(opportunity.monetaryValue ?? opportunity.value ?? 0), owner: userNames.get(String(opportunity.assignedTo ?? '')) ?? 'Unassigned', updated_at: String(opportunity.updatedAt ?? opportunity.lastStatusChangeAt ?? ''), next_action: null }
+    const stage = stages.get(String(opportunity.pipelineStageId ?? ''))
+    return { id: String(opportunity.id ?? ''), lead_id: String(opportunity.contactId ?? ''), name: String(opportunity.name ?? contact?.name ?? 'Opportunity'), stage: status === 'won' ? 'closed won' : status === 'lost' ? 'closed lost' : stage?.stageName ?? status, stage_name: stage?.stageName ?? status, pipeline_id: String(opportunity.pipelineId ?? stage?.pipelineId ?? ''), pipeline_name: stage?.pipelineName ?? '', pipeline_stage_id: String(opportunity.pipelineStageId ?? ''), value: Number(opportunity.monetaryValue ?? opportunity.value ?? 0), owner: userNames.get(String(opportunity.assignedTo ?? '')) ?? 'Unassigned', status, created_at: String(opportunity.createdAt ?? opportunity.dateAdded ?? ''), updated_at: String(opportunity.lastStatusChangeAt ?? opportunity.updatedAt ?? ''), next_action: null }
   })
   const closerRows = users.map((user) => {
     const name = userNames.get(String(user.id ?? '')) ?? 'Unknown user'
@@ -447,7 +454,24 @@ export async function syncHighLevel(credential: HighLevelCredential, fetcher: Fe
     const won = owned.filter((deal) => deal.stage === 'closed won').length
     return { id: String(user.id ?? ''), name, email: String(user.email ?? ''), calls: 0, close_rate: owned.length ? Math.round(won / owned.length * 1000) / 10 : 0, active: !user.deleted }
   })
-  return { leads: dataset('leads', 'GoHighLevel', leads), deals: dataset('deals', 'GoHighLevel', deals), closers: dataset('closers', 'GoHighLevel', closerRows) }
+  const kpiOpportunities: HighLevelOpportunitySyncRecord[] = opportunities.map((opportunity) => {
+    const contact = opportunity.contact as Record<string, unknown> | undefined
+    const stage = stages.get(String(opportunity.pipelineStageId ?? ''))
+    return {
+      opportunityId: String(opportunity.id ?? ''),
+      contactId: String(opportunity.contactId ?? ''),
+      personName: String(contact?.name ?? opportunity.name ?? 'Unnamed lead'),
+      owner: userNames.get(String(opportunity.assignedTo ?? '')) ?? 'Unassigned',
+      pipelineId: String(opportunity.pipelineId ?? stage?.pipelineId ?? ''),
+      stageId: String(opportunity.pipelineStageId ?? ''),
+      stageName: stage?.stageName ?? String(opportunity.status ?? 'Unknown stage'),
+      status: String(opportunity.status ?? 'open').toLowerCase(),
+      value: Number(opportunity.monetaryValue ?? opportunity.value ?? 0),
+      enteredAt: String(opportunity.createdAt ?? opportunity.dateAdded ?? ''),
+      changedAt: String(opportunity.lastStatusChangeAt ?? opportunity.updatedAt ?? opportunity.createdAt ?? ''),
+    }
+  })
+  return { leads: dataset('leads', 'GoHighLevel', leads), deals: dataset('deals', 'GoHighLevel', deals), closers: dataset('closers', 'GoHighLevel', closerRows), highLevelKpi: { stages: stageCatalog, opportunities: kpiOpportunities } }
 }
 
 export async function sendHighLevelMessage(credential: HighLevelCredential, input: { contactId: string; channel: 'sms' | 'email'; body: string; subject?: string; fromEmail?: string; fromNumber?: string }, fetcher: Fetcher = fetch) {
@@ -528,4 +552,72 @@ export async function syncFathom(credential: FathomCredential, fetcher: Fetcher 
     if (!cursor) break
   }
   return calls
+}
+
+async function zoomAccessToken(credential: ZoomCredential, fetcher: Fetcher) {
+  const body = new URLSearchParams({ grant_type: 'account_credentials', account_id: credential.accountId.trim() })
+  const token = await jsonRequest<{ access_token: string }>('https://zoom.us/oauth/token', {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${credential.clientId.trim()}:${credential.clientSecret.trim()}`).toString('base64')}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body,
+  }, fetcher)
+  if (!token.access_token) throw new Error('Zoom did not return an access token. Check that the Server-to-Server OAuth app is active.')
+  return token.access_token
+}
+
+const zoomHeaders = (accessToken: string) => ({ Authorization: `Bearer ${accessToken}` })
+
+export async function validateZoom(credential: ZoomCredential, fetcher: Fetcher = fetch, meetingId?: string) {
+  const accessToken = await zoomAccessToken(credential, fetcher)
+  const cleanMeetingId = meetingId?.replace(/\D/g, '')
+  if (cleanMeetingId) await jsonRequest(`https://api.zoom.us/v2/past_meetings/${encodeURIComponent(cleanMeetingId)}/instances`, { headers: zoomHeaders(accessToken) }, fetcher)
+  return { accountLabel: cleanMeetingId ? `Zoom coaching meeting · ${cleanMeetingId.slice(-4)}` : 'Zoom account' }
+}
+
+function zoomMeetingUuid(uuid: string) {
+  const encoded = encodeURIComponent(uuid)
+  return uuid.startsWith('/') || uuid.includes('//') ? encodeURIComponent(encoded) : encoded
+}
+
+export async function syncZoomCoachingAttendance(credential: ZoomCredential, meetingId: string, fetcher: Fetcher = fetch): Promise<CoachingSessionRecord[]> {
+  const accessToken = await zoomAccessToken(credential, fetcher)
+  const headers = zoomHeaders(accessToken)
+  const cleanMeetingId = meetingId.replace(/\D/g, '')
+  if (cleanMeetingId.length < 9) throw new Error('Enter the recurring Zoom meeting ID, not the full meeting link.')
+  const instanceResult = await jsonRequest<{ meetings?: Array<{ uuid?: string; start_time?: string }> }>(`https://api.zoom.us/v2/past_meetings/${encodeURIComponent(cleanMeetingId)}/instances`, { headers }, fetcher)
+  const sessions: CoachingSessionRecord[] = []
+  for (const instance of (instanceResult.meetings ?? []).slice(-60)) {
+    if (!instance.uuid || !instance.start_time) continue
+    const participants: CoachingParticipantRecord[] = []
+    let nextPageToken = ''
+    for (let page = 0; page < 10; page += 1) {
+      const url = new URL(`https://api.zoom.us/v2/past_meetings/${zoomMeetingUuid(instance.uuid)}/participants`)
+      url.searchParams.set('page_size', '300')
+      if (nextPageToken) url.searchParams.set('next_page_token', nextPageToken)
+      const result = await jsonRequest<{ participants?: Array<{ id?: string; user_id?: string; name?: string; user_name?: string; user_email?: string; email?: string; join_time?: string; leave_time?: string; duration?: number }>; next_page_token?: string }>(url.toString(), { headers }, fetcher)
+      for (const participant of result.participants ?? []) participants.push({
+        id: String(participant.id ?? participant.user_id ?? `${participant.user_email ?? participant.email ?? participant.name}-${participant.join_time ?? participants.length}`),
+        name: String(participant.name ?? participant.user_name ?? participant.user_email ?? participant.email ?? 'Unknown attendee'),
+        email: String(participant.user_email ?? participant.email ?? '').trim().toLowerCase() || undefined,
+        joinTime: participant.join_time,
+        leaveTime: participant.leave_time,
+        durationMinutes: Math.max(0, Math.round(Number(participant.duration ?? 0) / 60)),
+        matchType: 'unmatched',
+      })
+      nextPageToken = result.next_page_token ?? ''
+      if (!nextPageToken) break
+    }
+    sessions.push({
+      id: instance.uuid,
+      meetingId: cleanMeetingId,
+      topic: 'Launch Webinars coaching call',
+      startedAt: instance.start_time,
+      participants,
+      syncedAt: new Date().toISOString(),
+    })
+  }
+  return sessions
 }

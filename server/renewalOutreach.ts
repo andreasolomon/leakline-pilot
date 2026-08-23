@@ -128,6 +128,13 @@ export function buildRenewalMessage(client: RenewalClientRecord, kind: RenewalOu
   const webinarProgress = client.webinarsHosted === 1
     ? 'You’ve got your first webinar under your belt now'
     : `You’ve got ${client.webinarsHosted} webinars under your belt now`
+  if (kind === 'va_upsell_opener') {
+    return {
+      templateKey: 'va_upsell_opener',
+      subject: 'VA pipeline support',
+      body: `Hey ${name}, it’s Fred. You mentioned on one of our coaching calls that you were interested in having a VA help work the leads coming into your pipeline. Is that still something you’d be open to?`,
+    }
+  }
   if (kind === 'programme_check_in') {
     const body = isLaunchWebinars
       ? `Hey ${name}, how’s everything going? ${webinarProgress}. Is there anything you’re stuck on or need a hand with?`
@@ -438,6 +445,12 @@ export class RenewalOutreachService {
         providerMessageId,
         conversationId,
       })
+      if (input.kind === 'va_upsell_opener' && !simulated) {
+        updatedClient.upsellCampaign ??= {}
+        updatedClient.upsellCampaign.openerSentAt ??= now
+        updatedClient.upsellCampaign.updatedAt = now
+        updatedClient.upsellCampaign.updatedBy = actor.name || actor.email
+      }
       const startsRenewalConversation = ['feedback_request', 'renewal_invitation', 'renewal_window_review', 'post_completion_review'].includes(input.kind)
       if (startsRenewalConversation && (updatedClient.renewalStatus === 'not_started' || updatedClient.renewalStatus === 'renewal_opportunity')) updatedClient.renewalStatus = 'conversation_needed'
       const followUp = renewalFollowUpReadiness(updatedClient)
@@ -465,6 +478,22 @@ export class RenewalOutreachService {
     const credential = workspace.credentials.quo
     if (!credential) throw new Error('Connect Quo before opening SMS history.')
     const messages = await listQuoMessages(credential, contact.phone, this.fetcher)
+    const qualifyingReply = client.upsellCampaign?.openerSentAt
+      ? messages.find((message) => message.direction === 'inbound' && Date.parse(message.createdAt) >= Date.parse(client.upsellCampaign!.openerSentAt!))
+      : undefined
+    let trackedClient = client
+    if (qualifyingReply && !client.upsellCampaign?.repliedAt) {
+      await this.store.update((draft) => {
+        const target = draft.workspaces.find((item) => item.id === workspaceId)?.renewalClients.find((item) => item.id === clientId)
+        if (!target) throw new Error('Renewal client not found.')
+        target.upsellCampaign ??= {}
+        target.upsellCampaign.repliedAt = qualifyingReply.createdAt
+        target.upsellCampaign.updatedAt = new Date().toISOString()
+        target.upsellCampaign.updatedBy = 'Quo conversation sync'
+        target.updatedAt = new Date().toISOString()
+        trackedClient = target
+      })
+    }
     const latestMessage = messages.at(-1)
     const suppressionReason = messages.filter((message) => message.direction === 'inbound').map((message) => renewalOptOutReason(message.body)).find(Boolean)
     const suggestion = latestMessage?.direction === 'inbound'
@@ -472,6 +501,7 @@ export class RenewalOutreachService {
       : undefined
     return {
       clientId,
+      client: trackedClient,
       participant: contact.phone,
       messages,
       suggestion,
@@ -570,6 +600,12 @@ export class RenewalOutreachService {
         createdAt: new Date().toISOString(),
         createdBy,
       })
+      if (latestOutbound?.kind === 'va_upsell_opener' || updatedClient.upsellCampaign?.openerSentAt) {
+        updatedClient.upsellCampaign ??= {}
+        updatedClient.upsellCampaign.repliedAt ??= new Date().toISOString()
+        updatedClient.upsellCampaign.updatedAt = new Date().toISOString()
+        updatedClient.upsellCampaign.updatedBy = createdBy
+      }
       updatedClient.nextAction = 'Review the client reply and book the progress and renewal call.'
       updatedClient.updatedAt = new Date().toISOString()
     })

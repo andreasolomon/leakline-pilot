@@ -64,12 +64,18 @@ export function parseKpiSheetCsv(fileName: string, text: string, now = new Date(
   const values = {} as Record<keyof typeof labels, number>
   const matchedFields: string[] = []
   const issues: string[] = []
+  let financialsPending = false
 
   for (const [field, aliases] of Object.entries(labels) as Array<[keyof typeof labels, readonly string[]]>) {
     const raw = findValue(rows, aliases, grossTotalsColumn >= 0 ? grossTotalsColumn : undefined)
       ?? findValue(rows, aliases)
     const parsed = raw === undefined ? undefined : numberValue(raw)
-    if (parsed === undefined || parsed < 0) issues.push(`${fieldNames[field]} was missing or was not a valid non-negative number.`)
+    if (parsed === undefined || parsed < 0) {
+      if (field === 'refunds' || field === 'totalRevenue' || field === 'cashCollected') {
+        values[field] = 0
+        financialsPending = true
+      } else issues.push(`${fieldNames[field]} was missing or was not a valid non-negative number.`)
+    }
     else {
       values[field] = parsed
       matchedFields.push(fieldNames[field])
@@ -90,6 +96,7 @@ export function parseKpiSheetCsv(fileName: string, text: string, now = new Date(
       periodStart: periodStartRaw ? isoDate(periodStartRaw) ?? today : today,
       periodEnd: periodEndRaw ? isoDate(periodEndRaw) ?? today : today,
       ...values,
+      financialsPending,
       notes: `Imported from ${fileName}`,
     },
   }

@@ -1,4 +1,4 @@
-export type ProviderId = 'stripe' | 'whop' | 'fanbasis' | 'highlevel' | 'google-calendar' | 'fathom' | 'clickup' | 'quo'
+export type ProviderId = 'stripe' | 'whop' | 'fanbasis' | 'highlevel' | 'google-calendar' | 'fathom' | 'clickup' | 'quo' | 'zoom'
 export type PaymentProviderId = 'stripe' | 'whop' | 'fanbasis'
 
 export type NormalizedRow = Record<string, string | number | boolean | null>
@@ -27,7 +27,7 @@ export type CallRecord = {
   url: string
 }
 
-export type RecordCounts = Partial<Record<DatasetImport['kind'] | 'calls' | 'renewalClients', number>>
+export type RecordCounts = Partial<Record<DatasetImport['kind'] | 'calls' | 'renewalClients' | 'coachingSessions' | 'coachingParticipants', number>>
 
 export type ConnectionMeta = {
   connectedAt: string
@@ -46,6 +46,7 @@ export type FathomCredential = { apiKey: string }
 export type GoogleCredential = { accessToken: string; refreshToken?: string; expiresAt: number; email?: string }
 export type ClickUpCredential = { apiToken: string; listId: string }
 export type QuoCredential = { apiKey: string; from: string; phoneNumberId?: string }
+export type ZoomCredential = { accountId: string; clientId: string; clientSecret: string }
 
 export type CredentialMap = {
   stripe: StripeCredential
@@ -56,6 +57,7 @@ export type CredentialMap = {
   'google-calendar': GoogleCredential
   clickup: ClickUpCredential
   quo: QuoCredential
+  zoom: ZoomCredential
 }
 
 export type StoreState = {
@@ -88,11 +90,107 @@ export type WorkspaceIntegrationState = {
   renewalClients: RenewalClientRecord[]
   clickUpRenewalImport?: ClickUpRenewalImportRecord
   kpiSnapshots: KpiSnapshotRecord[]
+  highLevelKpi: HighLevelKpiState
+  coachingAttendance: CoachingAttendanceState
+}
+
+export type CoachingAttendanceSettingsRecord = {
+  meetingId?: string
+  minimumMinutes: number
+  teamEmails: string[]
+  updatedAt?: string
+  updatedBy?: string
+}
+
+export type CoachingParticipantRecord = {
+  id: string
+  name: string
+  email?: string
+  joinTime?: string
+  leaveTime?: string
+  durationMinutes: number
+  matchedClientId?: string
+  matchType: 'email' | 'name' | 'unmatched' | 'team'
+}
+
+export type CoachingSessionRecord = {
+  id: string
+  meetingId: string
+  topic: string
+  startedAt: string
+  participants: CoachingParticipantRecord[]
+  syncedAt: string
+}
+
+export type CoachingAttendanceState = {
+  settings: CoachingAttendanceSettingsRecord
+  sessions: CoachingSessionRecord[]
+}
+
+export type HighLevelKpiOutcome = 'appointment_booked' | 'no_show' | 'rescheduled' | 'showed_started' | 'showed_not_converted'
+
+export type HighLevelPipelineStageRecord = {
+  pipelineId: string
+  pipelineName: string
+  stageId: string
+  stageName: string
+}
+
+export type HighLevelOpportunitySyncRecord = {
+  opportunityId: string
+  contactId: string
+  personName: string
+  owner: string
+  pipelineId: string
+  stageId: string
+  stageName: string
+  status: string
+  value: number
+  enteredAt?: string
+  changedAt: string
+}
+
+export type HighLevelKpiOpportunityRecord = HighLevelOpportunitySyncRecord & {
+  firstSeenAt: string
+  lastSeenAt: string
+}
+
+export type HighLevelKpiStageEventRecord = HighLevelOpportunitySyncRecord & {
+  id: string
+  recordedAt: string
+}
+
+export type HighLevelKpiSettingsRecord = {
+  pipelineId?: string
+  stageMappings: Record<string, HighLevelKpiOutcome>
+  updatedAt?: string
+  updatedBy?: string
+}
+
+export type HighLevelKpiState = {
+  settings: HighLevelKpiSettingsRecord
+  stages: HighLevelPipelineStageRecord[]
+  opportunities: HighLevelKpiOpportunityRecord[]
+  stageEvents: HighLevelKpiStageEventRecord[]
 }
 
 export type RenewalStatus = 'not_started' | 'renewal_opportunity' | 'conversation_needed' | 'call_booked' | 'decision_pending' | 'renewed' | 'declined'
 export type RenewalOutreachStatus = 'eligible' | 'paused' | 'do_not_contact'
-export type RenewalOutreachKind = 'feedback_request' | 'renewal_invitation' | 'programme_check_in' | 'webinar_accountability' | 'renewal_window_review' | 'post_completion_review' | 'no_response_follow_up'
+export type RenewalOutreachKind = 'feedback_request' | 'renewal_invitation' | 'programme_check_in' | 'webinar_accountability' | 'renewal_window_review' | 'post_completion_review' | 'no_response_follow_up' | 'va_upsell_opener'
+export type UpsellCampaignStage = 'not_contacted' | 'opener_sent' | 'replied' | 'interest_confirmed' | 'call_offered' | 'call_booked' | 'call_attended' | 'won' | 'lost'
+export type UpsellCampaignTrackingRecord = {
+  openerSentAt?: string
+  repliedAt?: string
+  interestConfirmedAt?: string
+  callOfferedAt?: string
+  callBookedAt?: string
+  callAttendedAt?: string
+  outcome?: 'won' | 'lost'
+  outcomeAt?: string
+  nonProceedReason?: string
+  updatedAt?: string
+  updatedBy?: string
+}
 export type RenewalOutreachActivityRecord = {
   id: string
   idempotencyKey?: string
@@ -137,6 +235,7 @@ export type RenewalClientRecord = {
   outreachStatus?: RenewalOutreachStatus
   outreachStatusReason?: string
   outreach?: RenewalOutreachActivityRecord[]
+  upsellCampaign?: UpsellCampaignTrackingRecord
   createdAt: string
   updatedAt: string
 }
@@ -174,6 +273,7 @@ export type KpiSnapshotRecord = {
   refunds: number
   totalRevenue: number
   cashCollected: number
+  financialsPending?: boolean
   notes?: string
   entries?: KpiCallEntryRecord[]
   source: 'manual' | 'clickup' | 'csv'

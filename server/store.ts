@@ -43,7 +43,19 @@ export const defaultPilotValidation = (): PilotValidationRecord => ({
   notes: '',
 })
 
-const emptyWorkspaceState = (businessName = 'Client business'): WorkspaceIntegrationState => ({ credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, imports: {}, calls: [], oauthStates: {}, recoveryCases: [], paymentRecoveryCases: [], recoveryPolicy: defaultRecoveryPolicy(businessName), pilotValidation: defaultPilotValidation(), renewalClients: [], clickUpRenewalImport: undefined, kpiSnapshots: [] })
+const emptyHighLevelKpiState = (): WorkspaceIntegrationState['highLevelKpi'] => ({
+  settings: { stageMappings: {} },
+  stages: [],
+  opportunities: [],
+  stageEvents: [],
+})
+
+const emptyCoachingAttendanceState = (): WorkspaceIntegrationState['coachingAttendance'] => ({
+  settings: { minimumMinutes: 15, teamEmails: [] },
+  sessions: [],
+})
+
+const emptyWorkspaceState = (businessName = 'Client business'): WorkspaceIntegrationState => ({ credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, imports: {}, calls: [], oauthStates: {}, recoveryCases: [], paymentRecoveryCases: [], recoveryPolicy: defaultRecoveryPolicy(businessName), pilotValidation: defaultPilotValidation(), renewalClients: [], clickUpRenewalImport: undefined, kpiSnapshots: [], highLevelKpi: emptyHighLevelKpiState(), coachingAttendance: emptyCoachingAttendanceState() })
 
 const emptyState = (): StoreState => ({ workspaces: [], credentials: {}, connections: {}, oauthConfig: {}, workspace: {}, calls: [], oauthStates: {}, users: [], sessions: [], invites: [], leadApplications: [], marketingEvents: [] })
 
@@ -92,6 +104,8 @@ function workspaceFromLegacy(input: Partial<StoreState>): WorkspaceRecord {
     renewalClients: [],
     clickUpRenewalImport: undefined,
     kpiSnapshots: [],
+    highLevelKpi: emptyHighLevelKpiState(),
+    coachingAttendance: emptyCoachingAttendanceState(),
   }
 }
 
@@ -126,9 +140,31 @@ function normaliseState(input: Partial<StoreState>): StoreState {
       renewalStatus: normaliseRenewalStatus(client.renewalStatus),
       outreachStatus: client.outreachStatus === 'paused' || client.outreachStatus === 'do_not_contact' ? client.outreachStatus : 'eligible',
       outreach: client.outreach ?? [],
+      upsellCampaign: client.upsellCampaign ?? {},
     })),
     clickUpRenewalImport: workspace.clickUpRenewalImport,
     kpiSnapshots: (workspace.kpiSnapshots ?? []).map((snapshot) => ({ ...snapshot, entries: snapshot.entries ?? [] })),
+    highLevelKpi: {
+      ...emptyHighLevelKpiState(),
+      ...(workspace.highLevelKpi ?? {}),
+      settings: { ...(workspace.highLevelKpi?.settings ?? {}), stageMappings: workspace.highLevelKpi?.settings?.stageMappings ?? {} },
+      stages: workspace.highLevelKpi?.stages ?? [],
+      opportunities: workspace.highLevelKpi?.opportunities ?? [],
+      stageEvents: workspace.highLevelKpi?.stageEvents ?? [],
+    },
+    coachingAttendance: {
+      ...emptyCoachingAttendanceState(),
+      ...(workspace.coachingAttendance ?? {}),
+      settings: {
+        ...emptyCoachingAttendanceState().settings,
+        ...(workspace.coachingAttendance?.settings ?? {}),
+        teamEmails: workspace.coachingAttendance?.settings?.teamEmails ?? [],
+      },
+      sessions: (workspace.coachingAttendance?.sessions ?? []).map((session) => ({
+        ...session,
+        participants: session.participants ?? [],
+      })),
+    },
   }))
   const fallbackWorkspaceId = state.workspaces[0]?.id ?? defaultWorkspaceId
   state.users = (state.users ?? []).map((user, index) => ({

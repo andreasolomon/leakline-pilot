@@ -77,6 +77,7 @@ describe.sequential('assisted renewal outreach', () => {
     expect(buildRenewalMessage(client, 'webinar_accountability', 60, 'LaunchWebinars').body).toMatch(/anything getting in the way of getting the next one booked/i)
     expect(buildRenewalMessage(client, 'renewal_window_review', 20, 'LaunchWebinars').body).toBe('Hey Pilot, how’s everything going? You’ve got 5 webinars under your belt now. How are you feeling about the progress so far?')
     expect(buildRenewalMessage(client, 'post_completion_review', -10, 'LaunchWebinars').body).toMatch(/what results did you get from the webinars you ran/i)
+    expect(buildRenewalMessage(client, 'va_upsell_opener', 20, 'LaunchWebinars').body).toBe('Hey Pilot, it’s Fred. You mentioned on one of our coaching calls that you were interested in having a VA help work the leads coming into your pipeline. Is that still something you’d be open to?')
   })
 
   it('uses a gentle bump once and then closes the loop without repeating itself', () => {
@@ -198,13 +199,16 @@ describe.sequential('assisted renewal outreach', () => {
     process.env.LEAKLINE_AUTH_DISABLED = 'true'
     const directory = await mkdtemp(join(tmpdir(), 'leakline-renewal-quo-'))
     let includeAnsweredReply = false
+    const inboundAt = new Date(Date.now() + 60_000).toISOString()
+    const outboundAt = new Date(Date.now() + 30_000).toISOString()
+    const answeredAt = new Date(Date.now() + 90_000).toISOString()
     const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/v1/messages') && init?.method === 'POST') return new Response(JSON.stringify({ data: { id: 'AC123', conversationId: 'CN123' } }), { status: 202, headers: { 'Content-Type': 'application/json' } })
       if (url.startsWith('https://api.quo.com/v1/messages?') && !init?.method) return new Response(JSON.stringify({ data: [
-        { id: 'AC-out', from: '+15551234567', to: ['+15550000000'], text: 'How has the program been going?', status: 'sent', createdAt: '2026-08-01T10:00:00.000Z', conversationId: 'CN123' },
-        { id: 'AC-in', from: '+15550000000', to: ['+15551234567'], text: 'It has been great. Can we discuss continuing?', status: 'received', createdAt: '2026-08-01T10:05:00.000Z', conversationId: 'CN123' },
-        ...(includeAnsweredReply ? [{ id: 'AC-reply', from: '+15551234567', to: ['+15550000000'], text: 'Absolutely. What time works best?', status: 'sent', createdAt: '2026-08-01T10:06:00.000Z', conversationId: 'CN123' }] : []),
+        { id: 'AC-out', from: '+15551234567', to: ['+15550000000'], text: 'How has the program been going?', status: 'sent', createdAt: outboundAt, conversationId: 'CN123' },
+        { id: 'AC-in', from: '+15550000000', to: ['+15551234567'], text: 'It has been great. Can we discuss continuing?', status: 'received', createdAt: inboundAt, conversationId: 'CN123' },
+        ...(includeAnsweredReply ? [{ id: 'AC-reply', from: '+15551234567', to: ['+15550000000'], text: 'Absolutely. What time works best?', status: 'sent', createdAt: answeredAt, conversationId: 'CN123' }] : []),
       ] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
       return new Response(JSON.stringify({ message: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
     }) as unknown as typeof fetch
@@ -233,16 +237,23 @@ describe.sequential('assisted renewal outreach', () => {
       })
 
       const clientId = created.body.client.id as string
-      const preview = await request(app).post(`/api/renewal-clients/${clientId}/outreach/preview`).send({ channel: 'sms', kind: 'renewal_invitation' }).expect(200)
+      const preview = await request(app).post(`/api/renewal-clients/${clientId}/outreach/preview`).send({ channel: 'sms', kind: 'va_upsell_opener' }).expect(200)
       expect(preview.body).toMatchObject({ canSend: true, to: '+15550000000', quoConnected: true, contactMatched: false })
-      const sent = await request(app).post(`/api/renewal-clients/${clientId}/outreach/send`).send({ channel: 'sms', kind: 'renewal_invitation', body: preview.body.body, approved: true, idempotencyKey: 'quo-renewal-send' }).expect(200)
+      const sent = await request(app).post(`/api/renewal-clients/${clientId}/outreach/send`).send({ channel: 'sms', kind: 'va_upsell_opener', body: preview.body.body, approved: true, idempotencyKey: 'quo-renewal-send' }).expect(200)
       expect(sent.body.activity).toMatchObject({ providerMessageId: 'AC123', conversationId: 'CN123', deliveryStatus: 'sent' })
+      expect(sent.body.client.upsellCampaign.openerSentAt).toBeTruthy()
       const conversation = await request(app).get(`/api/renewal-clients/${clientId}/conversation`).expect(200)
       expect(conversation.body.messages).toEqual([
         expect.objectContaining({ id: 'AC-out', direction: 'outbound' }),
         expect.objectContaining({ id: 'AC-in', direction: 'inbound', body: 'It has been great. Can we discuss continuing?' }),
       ])
       expect(conversation.body.suggestion).toMatchObject({ sourceMessageId: 'AC-in', intent: 'ready_to_continue', body: expect.stringMatching(/what day and time works best/i) })
+      expect(conversation.body.client.upsellCampaign.repliedAt).toBe(inboundAt)
+      const booked = await request(app).patch(`/api/renewal-clients/${clientId}/upsell-campaign`).send({ stage: 'call_booked' }).expect(200)
+      expect(booked.body.client.upsellCampaign).toMatchObject({ openerSentAt: expect.any(String), repliedAt: expect.any(String), interestConfirmedAt: expect.any(String), callOfferedAt: expect.any(String), callBookedAt: expect.any(String) })
+      await request(app).patch(`/api/renewal-clients/${clientId}/upsell-campaign`).send({ stage: 'lost' }).expect(400)
+      const lost = await request(app).patch(`/api/renewal-clients/${clientId}/upsell-campaign`).send({ stage: 'lost', nonProceedReason: 'The timing was not right.' }).expect(200)
+      expect(lost.body.client.upsellCampaign).toMatchObject({ outcome: 'lost', nonProceedReason: 'The timing was not right.' })
       await request(app).post(`/api/renewal-clients/${clientId}/conversation/send`).send({ body: 'Absolutely. What time works best?', idempotencyKey: 'quo-reply-unapproved' }).expect(400)
       const approvedReply = { body: 'Absolutely. What time works best?', approved: true, idempotencyKey: 'quo-conversation-reply', sourceMessageId: 'AC-in' }
       const reply = await request(app).post(`/api/renewal-clients/${clientId}/conversation/send`).send(approvedReply).expect(200)

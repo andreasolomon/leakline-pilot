@@ -257,7 +257,11 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
     }
     if (!quiet) setConversationBusy('loading')
     try {
-      const result = await renewalApi<{ messages: QuoConversationMessage[]; suggestion?: RenewalReplySuggestion; suppressionReason?: string }>(`/api/renewal-clients/${client.id}/conversation`)
+      const result = await renewalApi<{ client?: RenewalClient; messages: QuoConversationMessage[]; suggestion?: RenewalReplySuggestion; suppressionReason?: string }>(`/api/renewal-clients/${client.id}/conversation`)
+      if (result.client) {
+        setClients((current) => current.map((item) => item.id === result.client!.id ? result.client! : item))
+        setOutreachClient((current) => current?.id === result.client!.id ? result.client : current)
+      }
       setQuoMessages(result.messages)
       setConversationSuppressionReason(result.suppressionReason ?? '')
       if (result.suggestion?.sourceMessageId && result.suggestion.sourceMessageId !== latestSuggestedInboundId.current) {
@@ -549,6 +553,7 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
 
             <div className="renewal-outreach-controls">
               <label>Message purpose<select value={outreachKind} onChange={(event) => changeOutreachDraft(event.target.value as RenewalOutreachKind)}>
+                <option value="va_upsell_opener">VA interest follow-up</option>
                 <option value="renewal_window_review">Warm progress check-in</option>
                 <option value="feedback_request">Ask for feedback</option>
                 <option value="no_response_follow_up">Follow up after no reply</option>

@@ -22,6 +22,7 @@ export type KpiSnapshot = {
   refunds: number
   totalRevenue: number
   cashCollected: number
+  financialsPending?: boolean
   notes?: string
   entries?: KpiCallEntry[]
   source: 'manual' | 'clickup' | 'csv'
@@ -93,4 +94,27 @@ export function compareKpiValue(current: number, previous: number | undefined) {
   if (previous === undefined) return undefined
   if (previous === 0) return current === 0 ? 0 : undefined
   return (current - previous) / Math.abs(previous) * 100
+}
+
+export function projectKpiSnapshotToMonthEnd(snapshot: KpiSnapshot, today = new Date()) {
+  const effective = effectiveKpiSnapshot(snapshot)
+  const [year, month, startDay] = snapshot.periodStart.split('-').map(Number)
+  const [endYear, endMonth, endDay] = snapshot.periodEnd.split('-').map(Number)
+  if (startDay !== 1 || year !== endYear || month !== endMonth) return undefined
+  const totalDays = new Date(Date.UTC(year, month, 0)).getUTCDate()
+  const todayDate = today.toISOString().slice(0, 10)
+  if (snapshot.periodEnd >= `${year}-${String(month).padStart(2, '0')}-${String(totalDays).padStart(2, '0')}` || snapshot.periodEnd > todayDate || endDay < 1) return undefined
+  const factor = totalDays / endDay
+  const projectCount = (value: number) => Math.round(value * factor)
+  const projectMoney = (value: number) => Math.round(value * factor)
+  return {
+    elapsedDays: endDay,
+    totalDays,
+    bookedCalls: projectCount(effective.bookedCalls),
+    callsTaken: projectCount(effective.callsTaken),
+    deals: projectCount(effective.deals),
+    refunds: snapshot.financialsPending ? undefined : projectCount(effective.refunds),
+    totalRevenue: snapshot.financialsPending ? undefined : projectMoney(effective.totalRevenue),
+    cashCollected: snapshot.financialsPending ? undefined : projectMoney(effective.cashCollected),
+  }
 }

@@ -276,3 +276,339 @@ header { background: rgba(248, 251, 252, .9); border-bottom-color: #d4e0e6; }
 @media (max-width: 720px) { .recovery-heading-actions { width: 100%; flex-direction: column; }.recovery-heading-actions button { width: 100%; }.recovery-filters { grid-template-columns: 1fr 1fr; }.recovery-search { grid-column: 1/-1; }.recovery-case-row { grid-template-columns: 6px minmax(110px,1fr) minmax(90px,.7fr) 16px; }.case-class,.case-owner { display: none; }.recovery-kpis,.pilot-validation-grid { grid-template-columns: 1fr 1fr; }.settings-grid { grid-template-columns: 1fr; } }
 @media (max-width: 620px) { .recovery-attention-queues { grid-template-columns: 1fr; }.assistant-actions { align-items: stretch; flex-direction: column; }.assistant-actions button { width: 100%; } }
 @media (max-width: 480px) { .recovery-kpis,.recovery-filters { grid-template-columns: 1fr; }.recovery-search { grid-column: auto; }.recovery-case-row { grid-template-columns: 5px 1fr auto; }.case-value { display: none; }.recovery-detail-grid { grid-template-columns: 1fr; }.recovery-detail-grid div { border-right: 0;border-bottom: 1px solid #e1e9ec !important; }.recovery-detail-grid div:last-child { border-bottom: 0 !important; } }
+
+/* Logged-in app readability pass. The landing page does not use .app-shell. */
+.app-shell {
+  font-size: 14px;
+}
+
+.app-shell p,
+.app-shell small {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.app-shell label,
+.app-shell button,
+.app-shell input,
+.app-shell select,
+.app-shell textarea {
+  font-size: 12px;
+}
+
+.app-shell input,
+.app-shell select,
+.app-shell textarea {
+  line-height: 1.45;
+}
+
+.app-shell .workspace-menu-label,
+.app-shell .sidebar nav p,
+.app-shell .popover-label,
+.app-shell .page-heading p,
+.app-shell .eyebrow,
+.app-shell .kpi-top,
+.app-shell .renewal-table-head,
+.app-shell .campaign-lead-head,
+.app-shell .kpi-call-head,
+.app-shell .kpi-history-head,
+.app-shell .kpi-section-heading span,
+.app-shell .renewal-client-editor legend {
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.app-shell .workspace-menu button,
+.app-shell .workspace-menu-current strong,
+.app-shell .header-popover strong,
+.app-shell .popover-empty,
+.app-shell .period-switcher button,
+.app-shell .custom-period-button,
+.app-shell .custom-period-button span,
+.app-shell .filter-row button,
+.app-shell .live-pill,
+.app-shell .kpi-meta span,
+.app-shell .action-severity,
+.app-shell .priority-action-summary > span,
+.app-shell .priority-action-impact span,
+.app-shell .priority-action-list > span,
+.app-shell .leak-copy .leak-type,
+.app-shell .leak-copy > span:last-child,
+.app-shell .leak-impact small,
+.app-shell .demo-path-steps span,
+.app-shell .demo-path-steps strong,
+.app-shell .offer-price-row small,
+.app-shell .report-link,
+.app-shell .privacy-note,
+.app-shell .hero-primary,
+.app-shell .hero-secondary,
+.app-shell .preflight-card strong,
+.app-shell .preflight-card p,
+.app-shell .preflight-card small,
+.app-shell .upload-copy p,
+.app-shell .choose-file,
+.app-shell .replace-file,
+.app-shell .file-result,
+.app-shell .map-columns,
+.app-shell .mapper-head span,
+.app-shell .mapper-head em,
+.app-shell .mapping-grid label > span,
+.app-shell .mapping-grid select,
+.app-shell .mapping-disabled,
+.app-shell .row-issues strong,
+.app-shell .row-issues span,
+.app-shell .summary-stats span,
+.app-shell .sample-status-list span,
+.app-shell .issue-note,
+.app-shell .alert-preview > span,
+.app-shell .alert-preview > div,
+.app-shell .alert-preview p,
+.app-shell .demo-data-note,
+.app-shell .clear-import,
+.app-shell .data-confidence-head p,
+.app-shell .data-confidence-head > span,
+.app-shell .confidence-grid strong,
+.app-shell .confidence-grid span {
+  font-size: 12px !important;
+  line-height: 1.45;
+}
+
+/* Renewal Command and Campaign Tracking contain the densest operational data. */
+.app-shell .renewal-header-context strong,
+.app-shell .renewal-command-heading span,
+.app-shell .renewal-notice,
+.app-shell .clickup-source-status span,
+.app-shell .clickup-source-status strong,
+.app-shell .renewal-summary-grid span,
+.app-shell .renewal-summary-grid small,
+.app-shell .renewal-channel-display,
+.app-shell .renewal-pipeline-explainer,
+.app-shell .renewal-pipeline-clear,
+.app-shell .renewal-pipeline-stage span,
+.app-shell .renewal-pipeline-stage small,
+.app-shell .upsell-metrics-grid span,
+.app-shell .renewal-client-name strong,
+.app-shell .webinar-counter strong,
+.app-shell .renewal-feedback strong,
+.app-shell .renewal-workflow strong,
+.app-shell .renewal-client-name small,
+.app-shell .renewal-programme small,
+.app-shell .webinar-counter small,
+.app-shell .renewal-feedback small,
+.app-shell .renewal-workflow small,
+.app-shell .renewal-upsell-workflow strong,
+.app-shell .renewal-upsell-workflow small,
+.app-shell .renewal-phase,
+.app-shell .renewal-readiness > small,
+.app-shell .renewal-readiness > em,
+.app-shell .renewal-next-action,
+.app-shell .feedback-explainer,
+.app-shell .feedback-client-list strong,
+.app-shell .feedback-client-list small,
+.app-shell .feedback-client-list em,
+.app-shell .feedback-empty span,
+.app-shell .renewal-outreach-context strong,
+.app-shell .renewal-outreach-context small,
+.app-shell .renewal-outreach-context em,
+.app-shell .renewal-outreach-readiness strong,
+.app-shell .renewal-outreach-readiness small,
+.app-shell .renewal-outreach-history strong,
+.app-shell .renewal-outreach-history small,
+.app-shell .renewal-outreach-events strong,
+.app-shell .renewal-outreach-events small,
+.app-shell .renewal-outreach-events p,
+.app-shell .renewal-outreach-empty span,
+.app-shell .renewal-conversation-error,
+.app-shell .renewal-conversation-loading,
+.app-shell .renewal-reply-suggestion small,
+.app-shell .renewal-reply-suggestion p,
+.app-shell .renewal-reply-suggestion blockquote,
+.app-shell .campaign-leads-panel .panel-head > small,
+.app-shell .campaign-lead-row strong,
+.app-shell .campaign-lead-row small,
+.app-shell .clickup-preview-summary span,
+.app-shell .clickup-preview-summary small,
+.app-shell .clickup-date-explainer strong,
+.app-shell .clickup-date-explainer small,
+.app-shell .clickup-import-issues strong,
+.app-shell .clickup-import-issues span,
+.app-shell .clickup-preview-table > div,
+.app-shell .clickup-preview-table > div:first-child,
+.app-shell .clickup-preview-table span strong,
+.app-shell .clickup-preview-table span small,
+.app-shell .clickup-more-rows {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.app-shell .renewal-toolbar input,
+.app-shell .renewal-toolbar select,
+.app-shell .renewal-workflow select,
+.app-shell .renewal-upsell-workflow select,
+.app-shell .renewal-client-editor input,
+.app-shell .renewal-client-editor select,
+.app-shell .renewal-client-editor textarea,
+.app-shell .renewal-outreach-modal input,
+.app-shell .renewal-outreach-modal select,
+.app-shell .renewal-outreach-modal textarea,
+.app-shell .upsell-loss-modal textarea {
+  font-size: 13px;
+}
+
+.app-shell .renewal-table {
+  min-width: 1320px;
+  grid-template-columns: 150px 190px 125px 145px 115px 130px minmax(215px, 1fr) 100px;
+}
+
+.app-shell .renewal-client-row,
+.app-shell .campaign-lead-row {
+  padding-block: 16px;
+}
+
+.app-shell .renewal-pipeline-track {
+  min-width: 1050px;
+  grid-template-columns: repeat(7, minmax(138px, 1fr));
+}
+
+.app-shell .upsell-metrics-grid {
+  grid-template-columns: repeat(8, minmax(116px, 1fr));
+}
+
+.app-shell .campaign-lead-table {
+  min-width: 1040px;
+  grid-template-columns: minmax(200px, 1.2fr) 145px 185px 165px minmax(240px, 1.4fr);
+}
+
+/* KPI Tracking keeps the same density while bringing every label above 10px. */
+.app-shell .kpi-tracking-heading span,
+.app-shell .kpi-period-strip strong,
+.app-shell .kpi-period-strip small,
+.app-shell .kpi-period-strip button,
+.app-shell .kpi-core-grid article > span,
+.app-shell .kpi-efficiency-grid article > span,
+.app-shell .kpi-core-grid article p,
+.app-shell .kpi-efficiency-grid article p,
+.app-shell .kpi-core-grid article small,
+.app-shell .kpi-efficiency-grid article small,
+.app-shell .kpi-call-ledger .panel-head p,
+.app-shell .kpi-ledger-empty p,
+.app-shell .kpi-ledger-empty button,
+.app-shell .kpi-call-row,
+.app-shell .kpi-call-row strong,
+.app-shell .kpi-call-row small,
+.app-shell .kpi-call-row em,
+.app-shell button.kpi-history-row,
+.app-shell .kpi-history-row strong,
+.app-shell .kpi-history-row small,
+.app-shell .kpi-entry-impact,
+.app-shell .kpi-import-summary span {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.app-shell .kpi-editor input,
+.app-shell .kpi-editor textarea,
+.app-shell .kpi-call-editor input,
+.app-shell .kpi-call-editor select,
+.app-shell .kpi-call-editor textarea,
+.app-shell .kpi-import-modal textarea {
+  font-size: 13px;
+}
+
+.app-shell .kpi-call-row {
+  min-width: 980px;
+  grid-template-columns: 105px minmax(205px,1.4fr) minmax(170px,1fr) 100px 120px 100px 30px;
+  padding-block: 13px;
+}
+
+.app-shell .kpi-history-row {
+  min-width: 980px;
+  grid-template-columns: minmax(200px, 1.4fr) repeat(3, 82px) 100px repeat(3, 112px);
+  padding-block: 13px;
+}
+
+/* Revenue Recovery is a second dense work area. */
+.app-shell .recovery-banner,
+.app-shell .recovery-kpis span,
+.app-shell .recovery-kpis small,
+.app-shell .pilot-signal,
+.app-shell .pilot-validation-grid span,
+.app-shell .pilot-validation-grid small,
+.app-shell .pilot-validation-card > p,
+.app-shell .pilot-thresholds span,
+.app-shell .recovery-attention-queues span,
+.app-shell .recovery-source-strip span,
+.app-shell .recovery-filters select,
+.app-shell .recovery-search,
+.app-shell .recovery-case-row strong,
+.app-shell .recovery-case-row small,
+.app-shell .case-class em,
+.app-shell .recovery-detail-head p,
+.app-shell .provider-chip,
+.app-shell .recovery-detail-money span,
+.app-shell .recovery-detail-money small,
+.app-shell .recovery-detail-grid span,
+.app-shell .recovery-detail-grid strong,
+.app-shell .human-review-warning strong,
+.app-shell .human-review-warning span,
+.app-shell .assistant-title > span,
+.app-shell .assistant-title em,
+.app-shell .conversation-assistant blockquote,
+.app-shell .conversation-assistant blockquote small,
+.app-shell .assistant-intent strong,
+.app-shell .assistant-intent span,
+.app-shell .conversation-assistant > label,
+.app-shell .assistant-actions button,
+.app-shell .promise-capture > span,
+.app-shell .promise-confirmed > span,
+.app-shell .promise-capture label,
+.app-shell .promise-capture input,
+.app-shell .promise-capture button,
+.app-shell .promise-confirmed button,
+.app-shell .promise-confirmed small,
+.app-shell .due-follow-up-list > span,
+.app-shell .due-follow-up-list strong,
+.app-shell .due-follow-up-list small,
+.app-shell .due-follow-up-list button,
+.app-shell .recommended-recovery > span,
+.app-shell .recommended-recovery p,
+.app-shell .recommended-recovery a,
+.app-shell .recommended-recovery small,
+.app-shell .assisted-actions button,
+.app-shell .promise-form button,
+.app-shell .activity-form button,
+.app-shell .message-preview > div,
+.app-shell .message-preview > span,
+.app-shell .message-preview > small,
+.app-shell .message-preview label,
+.app-shell .promise-form > span,
+.app-shell .activity-form > span,
+.app-shell .recovery-history > span,
+.app-shell .promise-form label,
+.app-shell .recovery-history strong,
+.app-shell .recovery-history small,
+.app-shell .case-outcomes button,
+.app-shell .template-tokens {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.app-shell .conversation-assistant textarea,
+.app-shell .message-preview textarea,
+.app-shell .promise-form input,
+.app-shell .activity-form input,
+.app-shell .activity-form select,
+.app-shell .recovery-settings select {
+  font-size: 13px;
+}
+
+@media (max-width: 780px) {
+  .app-shell {
+    font-size: 15px;
+  }
+
+  .app-shell p,
+  .app-shell small {
+    font-size: 13px;
+  }
+}

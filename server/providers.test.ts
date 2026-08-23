@@ -186,7 +186,7 @@ describe('Version 2 service boundary', () => {
 
       const integrations = await agent.get('/api/integrations')
       expect(integrations.status).toBe(200)
-      expect(integrations.body.statuses).toHaveLength(8)
+      expect(integrations.body.statuses).toHaveLength(9)
 
       await agent.post('/api/auth/logout').send({})
       expect((await agent.get('/api/integrations')).status).toBe(401)
@@ -365,7 +365,7 @@ describe('Version 2 service boundary', () => {
       expect((await request(app).get('/api/health')).body).toEqual({ ok: true, version: 2 })
       const integrations = await request(app).get('/api/integrations')
       expect(integrations.status).toBe(200)
-      expect(integrations.body.statuses).toHaveLength(8)
+      expect(integrations.body.statuses).toHaveLength(9)
     } finally { await rm(directory, { recursive: true, force: true }) }
   })
 

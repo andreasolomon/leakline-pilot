@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { daysUntilProgrammeEnd, programmeEndDate, programmePhase, recommendedRenewalAction, recommendedRenewalOutreachKind, renewalOutreachAvailability, renewalPipelineStage, renewalPipelineSummary, renewalReadiness, renewalSummary, type RenewalClient } from './renewalCommand'
+import { daysUntilProgrammeEnd, programmeEndDate, programmePhase, recommendedRenewalAction, recommendedRenewalOutreachKind, renewalOutreachAvailability, renewalPipelineStage, renewalPipelineSummary, renewalReadiness, renewalSummary, upsellCampaignStage, upsellCampaignSummary, type RenewalClient } from './renewalCommand'
 
 const client = (overrides: Partial<RenewalClient> = {}): RenewalClient => ({
   id: 'renewal-1',
@@ -145,5 +145,18 @@ describe('Renewal Command calculations', () => {
       renewalPipelineValue: 17000,
       renewalCashCollected: 8000,
     })
+  })
+
+  it('tracks every completed upsell milestone without losing earlier funnel counts', () => {
+    const clients = [
+      client({ id: 'sent', upsellCampaign: { openerSentAt: '2026-08-01T10:00:00.000Z' } }),
+      client({ id: 'booked', upsellCampaign: { openerSentAt: '2026-08-01T10:00:00.000Z', repliedAt: '2026-08-01T10:05:00.000Z', interestConfirmedAt: '2026-08-01T10:10:00.000Z', callOfferedAt: '2026-08-01T10:15:00.000Z', callBookedAt: '2026-08-01T10:20:00.000Z' } }),
+      client({ id: 'lost', upsellCampaign: { openerSentAt: '2026-08-02T10:00:00.000Z', repliedAt: '2026-08-02T10:05:00.000Z', outcome: 'lost', outcomeAt: '2026-08-02T10:10:00.000Z', nonProceedReason: 'Timing was not right.' } }),
+    ]
+
+    expect(upsellCampaignStage(clients[0])).toBe('opener_sent')
+    expect(upsellCampaignStage(clients[1])).toBe('call_booked')
+    expect(upsellCampaignStage(clients[2])).toBe('lost')
+    expect(upsellCampaignSummary(clients)).toEqual({ openerSent: 3, replied: 2, interestConfirmed: 1, callOffered: 1, callBooked: 1, callAttended: 0, won: 0, lost: 1 })
   })
 })

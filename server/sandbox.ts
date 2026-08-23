@@ -1,9 +1,10 @@
-import type { CallRecord, DatasetImport, IntegrationWorkspace, NormalizedRow, ProviderId, RecordCounts } from './types.js'
+import type { CallRecord, DatasetImport, HighLevelOpportunitySyncRecord, HighLevelPipelineStageRecord, IntegrationWorkspace, NormalizedRow, ProviderId, RecordCounts } from './types.js'
 import { syncFathom, syncGoogleCalendar, syncHighLevel, syncStripe } from './providers.js'
 
 type SandboxResult = {
   workspace: IntegrationWorkspace
   calls?: CallRecord[]
+  highLevelKpi?: { stages: HighLevelPipelineStageRecord[]; opportunities: HighLevelOpportunitySyncRecord[] }
   accountLabel: string
   recordCounts: RecordCounts
 }
@@ -70,9 +71,9 @@ export async function sandboxSync(provider: ProviderId): Promise<SandboxResult> 
       if (url.includes('/opportunities/search')) return reply({ opportunities: [
         { id: 'D-SBX-1', contactId: 'L-SBX-1', name: 'Maya Coaching Deal', status: 'won', monetaryValue: 12000, assignedTo: 'U-SBX-1', updatedAt: '2026-06-08T12:00:00Z' },
         { id: 'D-SBX-2', contactId: 'L-SBX-2', name: 'Owen Consulting Deal', status: 'lost', monetaryValue: 9000, assignedTo: 'U-SBX-2', updatedAt: '2026-06-09T12:00:00Z' },
-        { id: 'D-SBX-3', contactId: 'L-SBX-3', name: 'Nina Accelerator Deal', status: 'open', monetaryValue: 6500, assignedTo: 'U-SBX-1', pipelineStageId: 'stage-booked', updatedAt: '2026-06-10T12:00:00Z' },
+        { id: 'D-SBX-3', contactId: 'L-SBX-3', name: 'Nina Accelerator Deal', status: 'open', monetaryValue: 6500, assignedTo: 'U-SBX-1', pipelineId: 'pipeline-sales', pipelineStageId: 'stage-booked', updatedAt: '2026-06-10T12:00:00Z' },
       ] })
-      if (url.includes('/opportunities/pipelines')) return reply({ pipelines: [{ stages: [{ id: 'stage-booked', name: 'Booked call' }] }] })
+      if (url.includes('/opportunities/pipelines')) return reply({ pipelines: [{ id: 'pipeline-sales', name: 'Sales pipeline', stages: [{ id: 'stage-booked', name: 'Booked call' }, { id: 'stage-no-show', name: 'No-show' }, { id: 'stage-started', name: 'Started' }] }] })
       if (url.includes('/users/')) return reply({ users: [
         { id: 'U-SBX-1', name: 'Alex Morgan', email: 'alex@example.com' },
         { id: 'U-SBX-2', name: 'Sam Rivera', email: 'sam@example.com' },
@@ -81,7 +82,7 @@ export async function sandboxSync(provider: ProviderId): Promise<SandboxResult> 
     }
     const result = await syncHighLevel({ accessToken: 'sandbox-token', locationId: 'sandbox-location' }, fetcher as typeof fetch)
     const workspace = { leads: relabelSandbox(result.leads), deals: relabelSandbox(result.deals), closers: relabelSandbox(result.closers) }
-    return { workspace, accountLabel: 'GoHighLevel sandbox data', recordCounts: counts(workspace) }
+    return { workspace, highLevelKpi: result.highLevelKpi, accountLabel: 'GoHighLevel sandbox data', recordCounts: counts(workspace) }
   }
 
   if (provider === 'google-calendar') {

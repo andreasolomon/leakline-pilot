@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import { EncryptedStore, defaultPilotValidation, defaultRecoveryPolicy } from './store.js'
 import { IntegrationService } from './integrationService.js'
-import type { KpiCallEntryRecord, KpiSnapshotRecord, ProviderId, RenewalClientRecord } from './types.js'
+import type { HighLevelKpiOutcome, KpiCallEntryRecord, KpiSnapshotRecord, ProviderId, RenewalClientRecord, UpsellCampaignStage } from './types.js'
 import { safeErrorMessage } from './safety.js'
 import { AuthService, type PublicUser } from './authService.js'
 import { frontendEntryForPath } from './frontendRoutes.js'
@@ -16,8 +16,10 @@ import { reconcilePaymentRecoveryCases } from './paymentRecovery.js'
 import { createRateLimiter, requireSameOriginMutation, securityHeaders } from './requestProtection.js'
 import { upsertClickUpRenewalClients } from './renewalImport.js'
 import { RenewalOutreachService } from './renewalOutreach.js'
+import { summarizeHighLevelKpis } from './highLevelKpi.js'
+import { coachingAttendanceReport } from './coachingAttendance.js'
 
-const providerSchema = z.enum(['stripe', 'whop', 'fanbasis', 'highlevel', 'google-calendar', 'fathom', 'clickup', 'quo'])
+const providerSchema = z.enum(['stripe', 'whop', 'fanbasis', 'highlevel', 'google-calendar', 'fathom', 'clickup', 'quo', 'zoom'])
 const isValidationError = (error: unknown) => error instanceof z.ZodError || Boolean(error && typeof error === 'object' && Array.isArray((error as { issues?: unknown }).issues))
 const roleSchema = z.enum(['owner', 'admin', 'manager', 'viewer'])
 const inviteRoleSchema = z.enum(['admin', 'manager', 'viewer'])
@@ -77,7 +79,7 @@ const pilotValidationSchema = z.object({
 })
 const optionalDateSchema = z.union([z.string().date(), z.literal('')]).transform((value) => value || undefined)
 const renewalStatusSchema = z.enum(['not_started', 'renewal_opportunity', 'conversation_needed', 'call_booked', 'decision_pending', 'renewed', 'declined'])
-const renewalOutreachKindSchema = z.enum(['feedback_request', 'renewal_invitation', 'programme_check_in', 'webinar_accountability', 'renewal_window_review', 'post_completion_review', 'no_response_follow_up'])
+const renewalOutreachKindSchema = z.enum(['feedback_request', 'renewal_invitation', 'programme_check_in', 'webinar_accountability', 'renewal_window_review', 'post_completion_review', 'no_response_follow_up', 'va_upsell_opener'])
 const renewalOutreachPreviewSchema = z.object({ channel: z.enum(['sms', 'email']), kind: renewalOutreachKindSchema }).strict()
 const renewalOutreachSendSchema = renewalOutreachPreviewSchema.extend({
   subject: z.string().trim().max(180).optional(),
@@ -91,6 +93,13 @@ const renewalConversationSendSchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(100),
   sourceMessageId: z.string().trim().min(1).max(200).optional(),
 }).strict()
+const upsellCampaignStageSchema = z.enum(['not_contacted', 'opener_sent', 'replied', 'interest_confirmed', 'call_offered', 'call_booked', 'call_attended', 'won', 'lost'])
+const upsellCampaignUpdateSchema = z.object({
+  stage: upsellCampaignStageSchema,
+  nonProceedReason: z.string().trim().max(500).optional(),
+}).strict().superRefine((input, context) => {
+  if (input.stage === 'lost' && !input.nonProceedReason) context.addIssue({ code: 'custom', path: ['nonProceedReason'], message: 'Record why the client did not proceed.' })
+})
 const renewalClientFieldsSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.union([z.string().trim().email().max(160), z.literal('')]).optional().transform((value) => value || undefined),
@@ -141,6 +150,46 @@ function renewalInputFromRecord(client: RenewalClientRecord) {
     nextAction: client.nextAction,
   }
 }
+
+const upsellMilestones: Array<{ stage: Exclude<UpsellCampaignStage, 'not_contacted' | 'won' | 'lost'>; field: 'openerSentAt' | 'repliedAt' | 'interestConfirmedAt' | 'callOfferedAt' | 'callBookedAt' | 'callAttendedAt' }> = [
+  { stage: 'opener_sent', field: 'openerSentAt' },
+  { stage: 'replied', field: 'repliedAt' },
+  { stage: 'interest_confirmed', field: 'interestConfirmedAt' },
+  { stage: 'call_offered', field: 'callOfferedAt' },
+  { stage: 'call_booked', field: 'callBookedAt' },
+  { stage: 'call_attended', field: 'callAttendedAt' },
+]
+
+function recordUpsellCampaignStage(client: RenewalClientRecord, stage: UpsellCampaignStage, actor: string, nonProceedReason?: string) {
+  const now = new Date().toISOString()
+  if (stage === 'not_contacted') {
+    client.upsellCampaign = { updatedAt: now, updatedBy: actor }
+    return
+  }
+  const campaign = client.upsellCampaign ??= {}
+  if (stage === 'lost') {
+    campaign.outcome = 'lost'
+    campaign.outcomeAt = now
+    campaign.nonProceedReason = nonProceedReason
+  } else {
+    const targetStage = stage === 'won' ? 'call_attended' : stage
+    const targetIndex = upsellMilestones.findIndex((item) => item.stage === targetStage)
+    for (const [index, milestone] of upsellMilestones.entries()) {
+      if (index <= targetIndex && !campaign[milestone.field]) campaign[milestone.field] = now
+    }
+    if (stage === 'won') {
+      campaign.outcome = 'won'
+      campaign.outcomeAt = now
+      delete campaign.nonProceedReason
+    } else if (campaign.outcome) {
+      delete campaign.outcome
+      delete campaign.outcomeAt
+      delete campaign.nonProceedReason
+    }
+  }
+  campaign.updatedAt = now
+  campaign.updatedBy = actor
+}
 const clickUpRenewalRowSchema = z.object({
   clickUpTaskId: z.string().trim().min(1).max(100),
   name: z.string().trim().min(2).max(120),
@@ -170,6 +219,7 @@ const kpiSnapshotFieldsSchema = z.object({
   refunds: z.number().int().min(0).max(10_000_000),
   totalRevenue: z.number().min(0).max(1_000_000_000),
   cashCollected: z.number().min(0).max(1_000_000_000),
+  financialsPending: z.boolean().optional(),
   notes: z.string().trim().max(2_000).optional(),
 }).strict()
 const validateKpiSnapshot = (snapshot: z.infer<typeof kpiSnapshotFieldsSchema>, context: z.RefinementCtx) => {
@@ -178,6 +228,24 @@ const validateKpiSnapshot = (snapshot: z.infer<typeof kpiSnapshotFieldsSchema>, 
 const kpiSnapshotInputSchema = kpiSnapshotFieldsSchema.superRefine(validateKpiSnapshot)
 const kpiSnapshotPatchSchema = kpiSnapshotFieldsSchema.partial().refine((value) => Object.keys(value).length > 0, 'Provide at least one field to update.')
 const kpiCallOutcomeSchema = z.enum(['full_pay', 'split_pay', 'deposit', 'no_deposit_follow_up', 'offer_didnt_buy', 'bad_fit_no_offer', 'no_show'])
+const highLevelKpiOutcomeSchema = z.enum(['appointment_booked', 'no_show', 'rescheduled', 'showed_started', 'showed_not_converted'])
+const highLevelKpiSettingsSchema = z.object({
+  pipelineId: z.string().trim().max(120).optional(),
+  stageMappings: z.record(z.string().trim().min(1).max(120), highLevelKpiOutcomeSchema).refine((mapping) => Object.keys(mapping).length <= 100, 'Map at most 100 GoHighLevel stages.'),
+}).strict()
+const coachingAttendanceSettingsSchema = z.object({
+  meetingId: z.string().trim().regex(/^(?:\d[ -]?){9,12}$/, 'Use the 9 to 12 digit recurring Zoom meeting ID.').transform((value) => value.replace(/\D/g, '')),
+  minimumMinutes: z.number().int().min(1).max(180),
+  teamEmails: z.array(z.string().trim().email().max(160).transform((value) => value.toLowerCase())).max(30),
+}).strict()
+const highLevelKpiReportQuerySchema = z.object({
+  period: z.enum(['week', 'month', 'custom']).default('month'),
+  startDate: z.string().date().optional(),
+  endDate: z.string().date().optional(),
+}).superRefine((value, context) => {
+  if (value.period === 'custom' && (!value.startDate || !value.endDate)) context.addIssue({ code: 'custom', message: 'Custom reporting requires a start and end date.' })
+  if (value.startDate && value.endDate && value.endDate < value.startDate) context.addIssue({ code: 'custom', path: ['endDate'], message: 'The reporting end date cannot be before the start date.' })
+})
 const kpiCallEntrySchema = z.object({
   occurredOn: z.string().date(),
   personName: z.string().trim().min(2).max(120),
@@ -200,6 +268,7 @@ function kpiInputFromRecord(snapshot: KpiSnapshotRecord) {
     refunds: snapshot.refunds,
     totalRevenue: snapshot.totalRevenue,
     cashCollected: snapshot.cashCollected,
+    financialsPending: snapshot.financialsPending,
     notes: snapshot.notes,
   }
 }
@@ -694,6 +763,8 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
           pilotValidation: defaultPilotValidation(),
           renewalClients: [],
           kpiSnapshots: [],
+          highLevelKpi: { settings: { stageMappings: {} }, stages: [], opportunities: [], stageEvents: [] },
+          coachingAttendance: { settings: { minimumMinutes: 15, teamEmails: [] }, sessions: [] },
         })
         for (const user of state.users.filter((item) => item.role === 'owner')) {
           user.workspaceIds = Array.from(new Set([...(user.workspaceIds ?? []), workspaceId]))
@@ -740,6 +811,33 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
       clients: [...workspace.renewalClients].sort((left, right) => left.name.localeCompare(right.name)),
       clickUpImport: workspace.clickUpRenewalImport,
     })
+  })
+
+  app.get('/api/coaching-attendance', async (_request, response) => {
+    const state = await store.read()
+    const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+    if (!workspace) return response.status(404).json({ error: 'Workspace not found.' })
+    response.json(coachingAttendanceReport(workspace))
+  })
+
+  app.patch('/api/coaching-attendance/settings', async (request, response) => {
+    try {
+      const actor = response.locals.user as PublicUser
+      auth.requireDataEditor(actor)
+      const input = coachingAttendanceSettingsSchema.parse(request.body)
+      await store.update((state) => {
+        const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+        if (!workspace) throw new Error('Workspace not found.')
+        workspace.coachingAttendance.settings = { ...input, updatedAt: new Date().toISOString(), updatedBy: actor.name || actor.email }
+      })
+      const state = await store.read()
+      const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+      if (!workspace) throw new Error('Workspace not found.')
+      response.json(coachingAttendanceReport(workspace))
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(isValidationError(error) ? 400 : /not found/i.test(message) ? 404 : 403).json({ error: message })
+    }
   })
 
   app.post('/api/renewal-clients/:clientId/outreach/preview', async (request, response) => {
@@ -820,6 +918,26 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     }
   })
 
+  app.patch('/api/renewal-clients/:clientId/upsell-campaign', async (request, response) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      const input = upsellCampaignUpdateSchema.parse(request.body)
+      const actor = response.locals.user as PublicUser
+      let client: RenewalClientRecord | undefined
+      await store.update((state) => {
+        const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+        client = workspace?.renewalClients.find((item) => item.id === request.params.clientId)
+        if (!client) throw new Error('Renewal client not found.')
+        recordUpsellCampaignStage(client, input.stage, actor.name || actor.email, input.nonProceedReason)
+        client.updatedAt = new Date().toISOString()
+      })
+      response.json({ client })
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(isValidationError(error) ? 400 : /not found/i.test(message) ? 404 : 403).json({ error: message })
+    }
+  })
+
   app.delete('/api/renewal-clients/:clientId', async (request, response) => {
     try {
       auth.requireDataEditor(response.locals.user as PublicUser)
@@ -871,6 +989,48 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
     if (!workspace) return response.status(404).json({ error: 'Workspace not found.' })
     response.json({ snapshots: [...workspace.kpiSnapshots].sort((left, right) => right.periodEnd.localeCompare(left.periodEnd) || right.updatedAt.localeCompare(left.updatedAt)) })
+  })
+
+  app.get('/api/kpi-tracking/highlevel', async (request, response) => {
+    try {
+      const query = highLevelKpiReportQuerySchema.parse(request.query)
+      const state = await store.read()
+      const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+      if (!workspace) return response.status(404).json({ error: 'Workspace not found.' })
+      response.json(summarizeHighLevelKpis(workspace, query))
+    } catch (error) {
+      response.status(400).json({ error: safeErrorMessage(error) })
+    }
+  })
+
+  app.patch('/api/kpi-tracking/highlevel/settings', async (request, response) => {
+    try {
+      auth.requireDataEditor(response.locals.user as PublicUser)
+      const input = highLevelKpiSettingsSchema.parse(request.body)
+      const actor = response.locals.user as PublicUser
+      await store.update((state) => {
+        const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+        if (!workspace) throw new Error('Workspace not found.')
+        const pipelineIds = new Set(workspace.highLevelKpi.stages.map((stage) => stage.pipelineId).filter(Boolean))
+        if (input.pipelineId && !pipelineIds.has(input.pipelineId)) throw new Error('Choose a pipeline returned by the latest GoHighLevel sync.')
+        const availableStageIds = new Set(workspace.highLevelKpi.stages.filter((stage) => !input.pipelineId || stage.pipelineId === input.pipelineId).map((stage) => stage.stageId))
+        const invalidStage = Object.keys(input.stageMappings).find((stageId) => !availableStageIds.has(stageId))
+        if (invalidStage) throw new Error('One or more mapped stages are not part of the selected GoHighLevel pipeline. Refresh GoHighLevel and try again.')
+        workspace.highLevelKpi.settings = {
+          pipelineId: input.pipelineId || undefined,
+          stageMappings: input.stageMappings as Record<string, HighLevelKpiOutcome>,
+          updatedAt: new Date().toISOString(),
+          updatedBy: actor.name,
+        }
+      })
+      const state = await store.read()
+      const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId(response) && !item.archivedAt)
+      if (!workspace) return response.status(404).json({ error: 'Workspace not found.' })
+      response.json(summarizeHighLevelKpis(workspace))
+    } catch (error) {
+      const message = safeErrorMessage(error)
+      response.status(isValidationError(error) ? 400 : /not found/i.test(message) ? 404 : /manager|access/i.test(message) ? 403 : 400).json({ error: message })
+    }
   })
 
   app.post('/api/kpi-snapshots', async (request, response) => {
@@ -1177,9 +1337,19 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     try {
       const provider = providerSchema.parse(request.params.provider)
       const actor = response.locals.user as PublicUser
-      if (provider === 'clickup' || provider === 'highlevel' || provider === 'quo') auth.requireDataEditor(actor)
+      if (provider === 'clickup' || provider === 'highlevel' || provider === 'quo' || provider === 'zoom') auth.requireDataEditor(actor)
       else auth.requireIntegrationManager(actor)
       if (provider === 'google-calendar') return response.status(400).json({ error: 'Use the Google OAuth start endpoint.' })
+      if (provider === 'zoom') {
+        const input = z.object({
+          accountId: z.string().trim().min(6).max(100),
+          clientId: z.string().trim().min(6).max(150),
+          clientSecret: z.string().trim().min(12).max(300),
+          meetingId: z.string().trim().regex(/^(?:\d[ -]?){9,12}$/, 'Use the 9 to 12 digit recurring Zoom meeting ID.').transform((value) => value.replace(/\D/g, '')),
+        }).strict().parse(request.body)
+        await service.connectZoom(activeWorkspaceId(response), { accountId: input.accountId, clientId: input.clientId, clientSecret: input.clientSecret }, input.meetingId)
+        return response.json(await service.snapshot(activeWorkspaceId(response)))
+      }
       const credential = provider === 'stripe'
         ? z.object({ secretKey: z.string().min(20).regex(/^(sk|rk)_(test|live)_/, 'Use a Stripe secret or restricted key.') }).parse(request.body)
         : provider === 'whop'
@@ -1212,7 +1382,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
     try {
       const provider = providerSchema.parse(request.params.provider)
       const actor = response.locals.user as PublicUser
-      if (provider === 'clickup' || provider === 'highlevel' || provider === 'quo') auth.requireDataEditor(actor)
+      if (provider === 'clickup' || provider === 'highlevel' || provider === 'quo' || provider === 'zoom') auth.requireDataEditor(actor)
       else auth.requireIntegrationManager(actor)
       await service.disconnect(activeWorkspaceId(response), provider)
       response.json(await service.snapshot(activeWorkspaceId(response)))

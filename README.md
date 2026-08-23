@@ -133,6 +133,7 @@ Official quickstart: https://developers.fathom.ai/quickstart
 - **Sync now** updates one provider.
 - **Sync all** updates every connected provider.
 - The backend automatically syncs connected providers every 15 minutes by default; configure `AUTO_SYNC_MINUTES` to change it.
+- GoHighLevel has a separate two-minute KPI sync so appointment-stage movements reach LeakLine faster; configure `GHL_KPI_SYNC_MINUTES` to change it.
 - Live datasets are merged with CSV datasets. A live provider owns only its corresponding dataset.
 - Disconnecting a provider removes its live records while preserving unrelated CSV imports.
 
