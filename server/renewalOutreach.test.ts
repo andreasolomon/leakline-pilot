@@ -46,14 +46,14 @@ function renewalClient(overrides: Partial<RenewalClientRecord> = {}): RenewalCli
 }
 
 describe.sequential('assisted renewal outreach', () => {
-  it('limits the campaign to approved, recently active clients in their final 30 days', () => {
+  it('allows approved outreach at any program stage while respecting explicit suppression', () => {
     expect(renewalOutreachEligibility(renewalClient()).available).toBe(true)
-    expect(renewalOutreachEligibility(renewalClient({ firstWebinarAt: undefined }))).toMatchObject({ available: false, phase: 'awaiting_activation' })
-    expect(renewalOutreachEligibility(renewalClient({ firstWebinarAt: dateDaysAgo(20), lastWebinarAt: dateDaysAgo(3) }))).toMatchObject({ available: false, phase: 'active' })
-    expect(renewalOutreachEligibility(renewalClient({ firstWebinarAt: dateDaysAgo(70), lastWebinarAt: dateDaysAgo(14) }))).toMatchObject({ available: false, phase: 'renewal_window', reason: expect.stringMatching(/recent webinar activity/i) })
-    expect(renewalOutreachEligibility(renewalClient({ firstWebinarAt: dateDaysAgo(100), lastWebinarAt: dateDaysAgo(5) }))).toMatchObject({ available: false, phase: 'completion_overdue', reason: expect.stringMatching(/excluded/i) })
-    expect(renewalOutreachEligibility(renewalClient({ renewalStatus: 'call_booked' }))).toMatchObject({ available: false })
-    expect(renewalOutreachEligibility(renewalClient({ renewalStatus: 'renewed' }))).toMatchObject({ available: false })
+    expect(renewalOutreachEligibility(renewalClient({ firstWebinarAt: undefined }))).toMatchObject({ available: true, phase: 'awaiting_activation' })
+    expect(renewalOutreachEligibility(renewalClient({ firstWebinarAt: dateDaysAgo(20), lastWebinarAt: dateDaysAgo(3) }))).toMatchObject({ available: true, phase: 'active' })
+    expect(renewalOutreachEligibility(renewalClient({ firstWebinarAt: dateDaysAgo(70), lastWebinarAt: dateDaysAgo(14) }))).toMatchObject({ available: true, phase: 'renewal_window' })
+    expect(renewalOutreachEligibility(renewalClient({ firstWebinarAt: dateDaysAgo(100), lastWebinarAt: dateDaysAgo(5) }))).toMatchObject({ available: true, phase: 'completion_overdue' })
+    expect(renewalOutreachEligibility(renewalClient({ renewalStatus: 'call_booked' }))).toMatchObject({ available: true })
+    expect(renewalOutreachEligibility(renewalClient({ renewalStatus: 'renewed' }))).toMatchObject({ available: true })
     expect(renewalOutreachEligibility(renewalClient({ outreachStatus: 'paused', outreachStatusReason: 'Not in the approved campaign list.' }))).toMatchObject({ available: false, reason: 'Not in the approved campaign list.' })
     expect(renewalOutreachEligibility(renewalClient({ outreachStatus: 'do_not_contact' }))).toMatchObject({ available: false, reason: expect.stringMatching(/do not contact/i) })
   })
@@ -187,8 +187,8 @@ describe.sequential('assisted renewal outreach', () => {
       const answered = await request(app).post(`/api/renewal-clients/${clientId}/outreach/preview`).send({ channel: 'email', kind: 'no_response_follow_up' }).expect(200)
       expect(answered.body).toMatchObject({ canSend: false, reason: expect.stringMatching(/unanswered renewal message/i) })
       await request(app).patch(`/api/renewal-clients/${clientId}`).send({ renewalStatus: 'call_booked' }).expect(200)
-      const stopped = await request(app).post(`/api/renewal-clients/${clientId}/outreach/preview`).send({ channel: 'email', kind: 'renewal_invitation' }).expect(200)
-      expect(stopped.body).toMatchObject({ canSend: false })
+      const afterBooking = await request(app).post(`/api/renewal-clients/${clientId}/outreach/preview`).send({ channel: 'email', kind: 'renewal_invitation' }).expect(200)
+      expect(afterBooking.body).toMatchObject({ canSend: true })
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

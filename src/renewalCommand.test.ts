@@ -55,7 +55,7 @@ describe('Renewal Command calculations', () => {
     expect(recommendedRenewalAction(item, new Date('2026-07-27T00:00:00.000Z'))).toMatch(/renewal-window review/i)
   })
 
-  it('selects outreach from the client phase and blocks clients awaiting activation', () => {
+  it('selects a useful draft from the client phase while allowing approved outreach at any stage', () => {
     const now = new Date('2026-07-27T00:00:00.000Z')
     const active = client({ firstWebinarAt: '2026-07-01', lastWebinarAt: '2026-07-25', webinarsHosted: 2 })
     const inactive = client({ firstWebinarAt: '2026-06-01', lastWebinarAt: '2026-07-01', webinarsHosted: 2 })
@@ -70,13 +70,15 @@ describe('Renewal Command calculations', () => {
     expect(recommendedRenewalAction(active, now)).toMatch(/program check-in/i)
     expect(recommendedRenewalAction(renewalWindow, now)).toMatch(/renewal-window review/i)
     expect(recommendedRenewalAction(completed, now)).toMatch(/post-completion review/i)
-    expect(renewalOutreachAvailability(active, now)).toMatchObject({ available: false, reason: expect.stringMatching(/final 30 days/i) })
-    expect(renewalOutreachAvailability(inactive, now)).toMatchObject({ available: false, reason: expect.stringMatching(/final 30 days/i) })
-    expect(renewalOutreachAvailability(renewalWindow, now).available).toBe(true)
-    expect(renewalOutreachAvailability(completed, now)).toMatchObject({ available: false, reason: expect.stringMatching(/excluded/i) })
-    expect(renewalOutreachAvailability(awaitingActivation, now)).toMatchObject({ available: false })
-    expect(renewalOutreachAvailability({ ...active, outreachStatus: 'paused', outreachStatusReason: 'Not approved by Yonas.' }, now)).toMatchObject({ available: false, reason: 'Not approved by Yonas.' })
-    expect(renewalOutreachAvailability({ ...active, outreachStatus: 'do_not_contact' }, now)).toMatchObject({ available: false, reason: expect.stringMatching(/do not contact/i) })
+    expect(renewalOutreachAvailability(active).available).toBe(true)
+    expect(renewalOutreachAvailability(inactive).available).toBe(true)
+    expect(renewalOutreachAvailability(renewalWindow).available).toBe(true)
+    expect(renewalOutreachAvailability(completed).available).toBe(true)
+    expect(renewalOutreachAvailability(awaitingActivation).available).toBe(true)
+    expect(renewalOutreachAvailability({ ...active, renewalStatus: 'call_booked' }).available).toBe(true)
+    expect(renewalOutreachAvailability({ ...active, renewalStatus: 'renewed' }).available).toBe(true)
+    expect(renewalOutreachAvailability({ ...active, outreachStatus: 'paused', outreachStatusReason: 'Not approved by Yonas.' })).toMatchObject({ available: false, reason: 'Not approved by Yonas.' })
+    expect(renewalOutreachAvailability({ ...active, outreachStatus: 'do_not_contact' })).toMatchObject({ available: false, reason: expect.stringMatching(/do not contact/i) })
   })
 
   it('automatically moves approaching clients into the renewal-opportunity stage', () => {

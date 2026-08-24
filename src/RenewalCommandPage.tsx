@@ -1,7 +1,8 @@
-import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, CalendarClock, CheckCircle2, MessageSquareQuote, MessageSquareText, Pencil, Plus, RefreshCw, Search, Send, Sparkles, Smartphone, Trash2, UsersRound, Video, X } from 'lucide-react'
-import { daysUntilProgrammeEnd, programmeEndDate, programmePhase, recommendedRenewalAction, recommendedRenewalOutreachKind, RENEWAL_PIPELINE_STAGES, renewalOutreachAvailability, renewalPipelineStage, renewalPipelineSummary, renewalReadiness, renewalStatusForPipelineStage, renewalSummary, type ProgrammePhase, type RenewalClient, type RenewalClientInput, type RenewalOutreachActivity, type RenewalOutreachKind, type RenewalPipelineStage } from './renewalCommand'
+import { type FormEvent, useEffect, useMemo, useState } from 'react'
+import { AlertTriangle, CalendarClock, CheckCircle2, MessageSquareQuote, MessageSquareText, Pencil, Plus, RefreshCw, Search, Trash2, UsersRound, Video, X } from 'lucide-react'
+import { daysUntilProgrammeEnd, programmeEndDate, programmePhase, recommendedRenewalAction, RENEWAL_PIPELINE_STAGES, renewalOutreachAvailability, renewalPipelineStage, renewalPipelineSummary, renewalReadiness, renewalStatusForPipelineStage, renewalSummary, type ProgrammePhase, type RenewalClient, type RenewalClientInput, type RenewalPipelineStage } from './renewalCommand'
 import { emptyRenewalClient, inputFromRenewalClient, renewalApi } from './renewalCommandClient'
+import RenewalOutreachDrawer from './RenewalOutreachDrawer'
 
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 const phaseLabels: Record<ProgrammePhase, string> = {
@@ -35,40 +36,6 @@ type ClickUpImportMeta = {
   unchanged: number
 }
 
-type RenewalOutreachPreview = {
-  channel: 'sms' | 'email'
-  kind: RenewalOutreachKind
-  to?: string
-  subject?: string
-  body: string
-  templateKey: string
-  canSend: boolean
-  reason: string
-  daysRemaining?: number
-  contactMatched: boolean
-  highLevelConnected: boolean
-  quoConnected?: boolean
-  history: RenewalOutreachActivity[]
-}
-
-type QuoConversationMessage = {
-  id: string
-  direction: 'inbound' | 'outbound'
-  body: string
-  status: string
-  createdAt: string
-  conversationId?: string
-}
-
-type RenewalReplySuggestion = {
-  intent: 'ready_to_continue' | 'positive_feedback' | 'webinar_blocked' | 'needs_support' | 'timing_or_budget' | 'not_interested' | 'opt_out' | 'unclear'
-  label: string
-  rationale: string
-  body: string
-  recommendedNextAction: string
-  sourceMessageId: string
-}
-
 function formatDate(value?: string) {
   if (!value) return 'Not set'
   return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value.slice(0, 10)}T00:00:00.000Z`))
@@ -95,22 +62,7 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
   const [draft, setDraft] = useState<RenewalClientInput>(emptyRenewalClient)
   const [editorOpen, setEditorOpen] = useState(false)
   const [clickUpImport, setClickUpImport] = useState<ClickUpImportMeta | undefined>()
-  const [outreachOpen, setOutreachOpen] = useState(false)
   const [outreachClient, setOutreachClient] = useState<RenewalClient | undefined>()
-  const [outreachKind, setOutreachKind] = useState<RenewalOutreachKind>('renewal_invitation')
-  const [outreachPreview, setOutreachPreview] = useState<RenewalOutreachPreview | undefined>()
-  const [outreachBody, setOutreachBody] = useState('')
-  const [outreachApproved, setOutreachApproved] = useState(false)
-  const [outreachKey, setOutreachKey] = useState('')
-  const [quoMessages, setQuoMessages] = useState<QuoConversationMessage[]>([])
-  const [replySuggestion, setReplySuggestion] = useState<RenewalReplySuggestion | undefined>()
-  const [conversationReply, setConversationReply] = useState('')
-  const [conversationApproved, setConversationApproved] = useState(false)
-  const [conversationError, setConversationError] = useState('')
-  const [conversationSuppressionReason, setConversationSuppressionReason] = useState('')
-  const [conversationBusy, setConversationBusy] = useState('')
-  const handledInboundId = useRef('')
-  const latestSuggestedInboundId = useRef('')
 
   const load = async () => {
     setBusy('loading')
@@ -230,142 +182,9 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
     }
   }
 
-  const fetchOutreachPreview = async (client: RenewalClient, kind: RenewalOutreachKind, channel: 'sms' | 'email') => {
-    setBusy(`outreach-${client.id}`)
-    setError('')
-    setOutreachApproved(false)
-    try {
-      const preview = await renewalApi<RenewalOutreachPreview>(`/api/renewal-clients/${client.id}/outreach/preview`, {
-        method: 'POST',
-        body: JSON.stringify({ kind, channel }),
-      })
-      setOutreachPreview(preview)
-      setOutreachBody(preview.body)
-    } catch (event) {
-      setOutreachPreview(undefined)
-      setError(event instanceof Error ? event.message : 'The renewal message could not be prepared.')
-    } finally {
-      setBusy('')
-    }
-  }
-
-  const loadQuoConversation = async (client: RenewalClient, quiet = false) => {
-    if (!client.phone) {
-      setQuoMessages([])
-      setConversationError('Add a mobile number to this client before opening the Quo conversation.')
-      return
-    }
-    if (!quiet) setConversationBusy('loading')
-    try {
-      const result = await renewalApi<{ client?: RenewalClient; messages: QuoConversationMessage[]; suggestion?: RenewalReplySuggestion; suppressionReason?: string }>(`/api/renewal-clients/${client.id}/conversation`)
-      if (result.client) {
-        setClients((current) => current.map((item) => item.id === result.client!.id ? result.client! : item))
-        setOutreachClient((current) => current?.id === result.client!.id ? result.client : current)
-      }
-      setQuoMessages(result.messages)
-      setConversationSuppressionReason(result.suppressionReason ?? '')
-      if (result.suggestion?.sourceMessageId && result.suggestion.sourceMessageId !== latestSuggestedInboundId.current) {
-        latestSuggestedInboundId.current = result.suggestion.sourceMessageId
-        setConversationApproved(false)
-      }
-      setReplySuggestion(result.suggestion?.sourceMessageId === handledInboundId.current ? undefined : result.suggestion)
-      setConversationError('')
-    } catch (event) {
-      setConversationError(event instanceof Error ? event.message : 'The Quo conversation could not be loaded.')
-    } finally {
-      if (!quiet) setConversationBusy('')
-    }
-  }
-
-  useEffect(() => {
-    if (!outreachOpen || !outreachClient) return
-    void loadQuoConversation(outreachClient)
-    const timer = window.setInterval(() => void loadQuoConversation(outreachClient, true), 10_000)
-    return () => window.clearInterval(timer)
-  }, [outreachOpen, outreachClient?.id])
-
-  const sendConversationReply = async () => {
-    if (!outreachClient || !conversationReply.trim() || !conversationApproved) return
-    setConversationBusy('sending')
-    setConversationError('')
-    try {
-      const result = await renewalApi<{ client: RenewalClient }>(`/api/renewal-clients/${outreachClient.id}/conversation/send`, {
-        method: 'POST',
-        body: JSON.stringify({
-          body: conversationReply.trim(),
-          approved: true,
-          idempotencyKey: crypto.randomUUID(),
-          sourceMessageId: [...quoMessages].reverse().find((message) => message.direction === 'inbound')?.id,
-        }),
-      })
-      handledInboundId.current = [...quoMessages].reverse().find((message) => message.direction === 'inbound')?.id ?? ''
-      setClients((current) => current.map((client) => client.id === result.client.id ? result.client : client))
-      setOutreachClient(result.client)
-      setConversationReply('')
-      setConversationApproved(false)
-      setReplySuggestion(undefined)
-      setNotice(`SMS sent through Quo to ${result.client.name}.`)
-      await loadQuoConversation(result.client, true)
-    } catch (event) {
-      setConversationError(event instanceof Error ? event.message : 'The SMS could not be sent through Quo.')
-    } finally {
-      setConversationBusy('')
-    }
-  }
-
   const openOutreach = (client: RenewalClient) => {
-    const kind = recommendedRenewalOutreachKind(client)
     setOutreachClient(client)
-    setOutreachKind(kind)
-    setOutreachKey(crypto.randomUUID())
-    setQuoMessages([])
-    setReplySuggestion(undefined)
-    setConversationReply('')
-    setConversationApproved(false)
-    setConversationError('')
-    setConversationSuppressionReason('')
-    handledInboundId.current = ''
-    latestSuggestedInboundId.current = ''
-    setOutreachOpen(true)
     setNotice('')
-    void fetchOutreachPreview(client, kind, 'sms')
-  }
-
-  const changeOutreachDraft = (kind: RenewalOutreachKind) => {
-    if (!outreachClient) return
-    setOutreachKind(kind)
-    setOutreachKey(crypto.randomUUID())
-    void fetchOutreachPreview(outreachClient, kind, 'sms')
-  }
-
-  const sendOutreach = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!outreachClient || !outreachPreview) return
-    setBusy(`send-outreach-${outreachClient.id}`)
-    setError('')
-    try {
-      const result = await renewalApi<{ client: RenewalClient; simulated: boolean }>(`/api/renewal-clients/${outreachClient.id}/outreach/send`, {
-        method: 'POST',
-        body: JSON.stringify({
-          kind: outreachKind,
-          channel: 'sms',
-          body: outreachBody,
-          approved: outreachApproved,
-          idempotencyKey: outreachKey,
-        }),
-      })
-      setClients((current) => current.map((client) => client.id === result.client.id ? result.client : client))
-      setOutreachClient(result.client)
-      setOutreachPreview((current) => current ? { ...current, history: [...(result.client.outreach ?? [])].sort((left, right) => right.createdAt.localeCompare(left.createdAt)) } : current)
-      setOutreachApproved(false)
-      setOutreachKey(crypto.randomUUID())
-      setNotice(`SMS ${result.simulated ? 'simulated' : 'sent'} for ${result.client.name}.`)
-    } catch (event) {
-      setOutreachKey(crypto.randomUUID())
-      setError(event instanceof Error ? event.message : 'The renewal message could not be sent.')
-    } finally {
-      setBusy('')
-    }
   }
 
   if (busy === 'loading') return <section className="renewal-command-page renewal-loading"><RefreshCw className="spin" /><span>Opening Renewal Command…</span></section>
@@ -466,7 +285,7 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
                 <small>{client.expectedRenewalValue ? `${money.format(client.expectedRenewalValue)} expected` : 'Value not set'}</small>
               </span>
               <span className="renewal-next-action">{recommendedRenewalAction(client)}</span>
-              <span className="renewal-row-actions">{canAct && <><button aria-label={`Message ${client.name}`} disabled={!renewalOutreachAvailability(client).available} title={renewalOutreachAvailability(client).reason} onClick={() => openOutreach(client)}><MessageSquareText size={14} /></button><button aria-label={`Update ${client.name}`} onClick={() => openEdit(client)}><Pencil size={14} /></button><button aria-label={`Remove ${client.name}`} onClick={() => void deleteClient(client)}><Trash2 size={14} /></button></>}</span>
+              <span className="renewal-row-actions">{canAct && <><button className="renewal-message-button" aria-label={`Message ${client.name}`} disabled={!renewalOutreachAvailability(client).available} title={renewalOutreachAvailability(client).reason} onClick={() => openOutreach(client)}><MessageSquareText size={14} /> Message</button><button aria-label={`Update ${client.name}`} onClick={() => openEdit(client)}><Pencil size={14} /></button><button aria-label={`Remove ${client.name}`} onClick={() => void deleteClient(client)}><Trash2 size={14} /></button></>}</span>
             </div>
           })}
           {!filtered.length && <div className="renewal-empty">
@@ -537,68 +356,15 @@ export default function RenewalCommandPage({ canAct, workspaceId, onOpenDataSour
       </form>
     </div>}
 
-    {outreachOpen && outreachClient && <div className="connection-modal-backdrop renewal-conversation-backdrop" onClick={() => setOutreachOpen(false)}>
-      <form className="connection-modal renewal-outreach-modal" onSubmit={sendOutreach} onClick={(event) => event.stopPropagation()}>
-        <button type="button" className="modal-close" onClick={() => setOutreachOpen(false)}><X size={18} /></button>
-        <span className="eyebrow">Assisted renewal outreach</span>
-        <h2>Message {outreachClient.name}</h2>
-        <p>Review the suggested message, see the live conversation and send approved SMS through Quo.</p>
-
-        <div className="renewal-outreach-layout">
-          <section className="renewal-outreach-draft">
-            <div className="renewal-outreach-context">
-              <span><strong>{outreachPreview?.daysRemaining !== undefined ? outreachPreview.daysRemaining < 0 ? `${Math.abs(outreachPreview.daysRemaining)} days past completion` : `${outreachPreview.daysRemaining} days remaining` : 'Program timing unavailable'}</strong><small>{outreachPreview?.templateKey.replaceAll('_', ' ') ?? 'Preparing draft…'}</small></span>
-              <em className={outreachPreview?.canSend ? 'ready' : 'blocked'}>{outreachPreview?.canSend ? 'Ready for approval' : 'Setup required'}</em>
-            </div>
-
-            <div className="renewal-outreach-controls">
-              <label>Message purpose<select value={outreachKind} onChange={(event) => changeOutreachDraft(event.target.value as RenewalOutreachKind)}>
-                <option value="va_upsell_opener">VA interest follow-up</option>
-                <option value="renewal_window_review">Warm progress check-in</option>
-                <option value="feedback_request">Ask for feedback</option>
-                <option value="no_response_follow_up">Follow up after no reply</option>
-              </select></label>
-              <label>Channel<span className="renewal-channel-display"><Smartphone size={14} /> SMS via Quo</span></label>
-            </div>
-
-            {outreachPreview && <div className={`renewal-outreach-readiness ${outreachPreview.canSend ? 'ready' : 'blocked'}`}>
-              {outreachPreview.canSend ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
-              <span><strong>{outreachPreview.to || 'No destination matched'}</strong><small>{outreachPreview.reason}</small></span>
-            </div>}
-
-            <label>Message<textarea value={outreachBody} onChange={(event) => { setOutreachBody(event.target.value); setOutreachApproved(false) }} /></label>
-            <label className="renewal-outreach-approval"><input type="checkbox" checked={outreachApproved} onChange={(event) => setOutreachApproved(event.target.checked)} /><span>I have reviewed this exact message and approve sending it to this client.</span></label>
-            <button className="primary-button renewal-send-button" disabled={!outreachPreview?.canSend || !outreachApproved || busy.startsWith('send-outreach')}>
-              <Smartphone size={14} />
-              {busy.startsWith('send-outreach') ? 'Sending…' : 'Approve and send SMS'}
-            </button>
-          </section>
-
-          <aside className="renewal-outreach-history">
-            <div><MessageSquareText size={16} /><span><strong>Quo conversation</strong><small>Incoming replies refresh automatically while this drawer is open.</small></span></div>
-            <>
-              {conversationError && <div className="renewal-conversation-error"><AlertTriangle size={14} /><span>{conversationError}</span></div>}
-              {conversationSuppressionReason && <div className="renewal-conversation-error"><AlertTriangle size={14} /><span>{conversationSuppressionReason} Further SMS is blocked.</span></div>}
-              {conversationBusy === 'loading' ? <div className="renewal-conversation-loading"><RefreshCw className="spin" size={16} /> Loading Quo messages…</div> : quoMessages.length ? <div className="quo-message-thread">{quoMessages.map((message) => <article key={message.id} className={message.direction}>
-                <p>{message.body}</p><small>{new Date(message.createdAt).toLocaleString('en-GB')} · {message.status}</small>
-              </article>)}</div> : !conversationError && <div className="renewal-outreach-empty"><MessageSquareQuote size={22} /><strong>No Quo messages yet</strong><span>Send the first approved SMS to start this conversation.</span></div>}
-              {replySuggestion && <div className={`renewal-reply-suggestion ${replySuggestion.intent}`}>
-                <div><Sparkles size={15} /><span><small>Suggested response path</small><strong>{replySuggestion.label}</strong></span></div>
-                <p>{replySuggestion.rationale}</p>
-                <blockquote>{replySuggestion.body}</blockquote>
-                <small><strong>Next action:</strong> {replySuggestion.recommendedNextAction}</small>
-                {replySuggestion.intent !== 'opt_out' && <button type="button" className="secondary-button" onClick={() => { setConversationReply(replySuggestion.body); setConversationApproved(false) }}>Use this editable reply</button>}
-              </div>}
-              <div className="quo-reply-composer">
-                <label>Reply through Quo<textarea maxLength={1600} value={conversationReply} onChange={(event) => { setConversationReply(event.target.value); setConversationApproved(false) }} placeholder="Type the next response or use the suggestion above…" /></label>
-                <label className="renewal-outreach-approval"><input type="checkbox" checked={conversationApproved} disabled={Boolean(conversationSuppressionReason)} onChange={(event) => setConversationApproved(event.target.checked)} /><span>I have reviewed this exact reply and approve sending it.</span></label>
-                <div><small>{conversationReply.length}/1600</small><button type="button" className="primary-button" disabled={!conversationReply.trim() || !conversationApproved || conversationBusy === 'sending' || Boolean(conversationError) || Boolean(conversationSuppressionReason)} onClick={() => void sendConversationReply()}><Send size={13} /> {conversationBusy === 'sending' ? 'Sending…' : 'Approve and send through Quo'}</button></div>
-              </div>
-            </>
-          </aside>
-        </div>
-      </form>
-    </div>}
+    {outreachClient && <RenewalOutreachDrawer
+      client={outreachClient}
+      onClose={() => setOutreachClient(undefined)}
+      onClientUpdated={(updated) => {
+        setOutreachClient(updated)
+        setClients((current) => current.map((client) => client.id === updated.id ? updated : client))
+      }}
+      onNotice={setNotice}
+    />}
 
   </section>
 }

@@ -23,7 +23,6 @@ const inactivityDays = 14
 const firstFollowUpDelayHours = 48
 const finalFollowUpDelayHours = 72
 const maxNoResponseFollowUps = 2
-const stoppedStatuses = new Set(['call_booked', 'decision_pending', 'renewed', 'declined'])
 
 function text(value: unknown) {
   return String(value ?? '').trim()
@@ -68,31 +67,15 @@ export function renewalOutreachPhase(client: RenewalClientRecord, now = new Date
 }
 
 export function renewalOutreachEligibility(client: RenewalClientRecord, now = new Date()) {
-  if (client.outreachStatus === 'do_not_contact') {
-    return { available: false, reason: client.outreachStatusReason?.trim() || 'This client is marked do not contact.' }
-  }
-  if (client.outreachStatus === 'paused') {
-    return { available: false, reason: client.outreachStatusReason?.trim() || 'This client is paused from the re-engagement campaign.' }
-  }
-  if (stoppedStatuses.has(client.renewalStatus)) {
-    return { available: false, reason: 'Outreach stops after a renewal call is booked or the opportunity is closed.' }
-  }
   const phase = renewalOutreachPhase(client, now)
   const daysRemaining = renewalDaysRemaining(client, now)
-  if (phase === 'awaiting_activation') {
-    return { available: false, reason: 'Outreach begins after the client completes their first webinar.', daysRemaining, phase }
+  if (client.outreachStatus === 'do_not_contact') {
+    return { available: false, reason: client.outreachStatusReason?.trim() || 'This client is marked do not contact.', daysRemaining, phase }
   }
-  if (phase === 'completion_overdue') {
-    return { available: false, reason: 'Completed clients are excluded from the current campaign.', daysRemaining, phase }
+  if (client.outreachStatus === 'paused') {
+    return { available: false, reason: client.outreachStatusReason?.trim() || 'This client is paused from the re-engagement campaign.', daysRemaining, phase }
   }
-  if (phase !== 'renewal_window') {
-    return { available: false, reason: 'The current campaign is limited to selected active clients in their final 30 days.', daysRemaining, phase }
-  }
-  const inactiveFor = daysSinceLastWebinar(client, now)
-  if (client.webinarsHosted < 1 || inactiveFor === undefined || inactiveFor >= inactivityDays) {
-    return { available: false, reason: 'This campaign requires recent webinar activity as well as final approval from Launch Webinars.', daysRemaining, phase }
-  }
-  return { available: true, reason: 'Ready for Fred’s approved final-30-day check-in.', daysRemaining, phase }
+  return { available: true, reason: 'Ready for an approved SMS through Quo.', daysRemaining, phase }
 }
 
 function contactForClient(workspace: WorkspaceRecord, client: RenewalClientRecord) {

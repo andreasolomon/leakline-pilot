@@ -1,7 +1,8 @@
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, CheckCircle2, RefreshCw, Search, X } from 'lucide-react'
-import { UPSELL_CAMPAIGN_STAGES, upsellCampaignStage, upsellCampaignSummary, type RenewalClient, type UpsellCampaignStage } from './renewalCommand'
+import { AlertTriangle, CheckCircle2, MessageSquareText, RefreshCw, Search, X } from 'lucide-react'
+import { renewalOutreachAvailability, UPSELL_CAMPAIGN_STAGES, upsellCampaignStage, upsellCampaignSummary, type RenewalClient, type UpsellCampaignStage } from './renewalCommand'
 import { renewalApi } from './renewalCommandClient'
+import RenewalOutreachDrawer from './RenewalOutreachDrawer'
 
 const stageLabels = Object.fromEntries(UPSELL_CAMPAIGN_STAGES.map((stage) => [stage.id, stage.label])) as Record<UpsellCampaignStage, string>
 
@@ -21,6 +22,7 @@ export default function CampaignTrackingPage({ canAct, workspaceId }: { canAct: 
   const [notice, setNotice] = useState('')
   const [lossClient, setLossClient] = useState<RenewalClient | undefined>()
   const [lossReason, setLossReason] = useState('')
+  const [messageClient, setMessageClient] = useState<RenewalClient | undefined>()
 
   useEffect(() => {
     let active = true
@@ -109,13 +111,14 @@ export default function CampaignTrackingPage({ canAct, workspaceId }: { canAct: 
         </select>
       </div>
       <div className="campaign-lead-table-wrap">
-        <div className="campaign-lead-table campaign-lead-head"><span>Client</span><span>Owner</span><span>Campaign stage</span><span>Latest activity</span><span>Outcome detail</span></div>
+        <div className="campaign-lead-table campaign-lead-head"><span>Client</span><span>Owner</span><span>Campaign stage</span><span>Latest activity</span><span>Outcome detail</span><span>SMS</span></div>
         {filtered.map((client) => <div className="campaign-lead-table campaign-lead-row" key={client.id}>
           <span><strong>{client.name}</strong><small>{client.email || client.phone || 'No contact detail saved'}</small></span>
           <span><strong>{client.owner}</strong></span>
           <span className="renewal-upsell-workflow">{canAct ? <select aria-label={`Upsell campaign stage for ${client.name}`} value={upsellCampaignStage(client)} disabled={busy === client.id} onChange={(event) => void updateCampaign(client, event.target.value as UpsellCampaignStage)}>{UPSELL_CAMPAIGN_STAGES.map((stage) => <option key={stage.id} value={stage.id}>{stage.label}</option>)}</select> : <strong>{stageLabels[upsellCampaignStage(client)]}</strong>}</span>
           <span><small>{latestCampaignActivity(client)}</small></span>
           <span className={client.upsellCampaign?.outcome === 'lost' ? 'campaign-loss-reason' : ''}><small>{client.upsellCampaign?.nonProceedReason || (client.upsellCampaign?.outcome === 'won' ? 'Upsell completed' : 'No outcome recorded')}</small></span>
+          <span>{canAct && <button className="secondary-button campaign-message-button" disabled={!renewalOutreachAvailability(client).available} title={renewalOutreachAvailability(client).reason} onClick={() => setMessageClient(client)}><MessageSquareText size={14} /> Message</button>}</span>
         </div>)}
         {!filtered.length && <div className="renewal-empty"><h3>No campaign leads match this view</h3><p>Change the filter or add clients in Renewal Command before tracking the campaign.</p></div>}
       </div>
@@ -131,5 +134,16 @@ export default function CampaignTrackingPage({ canAct, workspaceId }: { canAct: 
         <div className="renewal-editor-actions"><button type="button" className="ghost-button" onClick={() => setLossClient(undefined)}>Cancel</button><button className="primary-button" disabled={!lossReason.trim() || busy === lossClient.id}>Save lost outcome</button></div>
       </form>
     </div>}
+
+    {messageClient && <RenewalOutreachDrawer
+      client={messageClient}
+      defaultKind="va_upsell_opener"
+      onClose={() => setMessageClient(undefined)}
+      onClientUpdated={(updated) => {
+        setMessageClient(updated)
+        setClients((current) => current.map((client) => client.id === updated.id ? updated : client))
+      }}
+      onNotice={setNotice}
+    />}
   </section>
 }

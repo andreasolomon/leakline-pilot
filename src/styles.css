@@ -486,7 +486,9 @@ header { height: 65px; background: rgba(252,251,248,.9); border-bottom: 1px soli
 .campaign-leads-panel { min-width: 0; }
 .campaign-leads-panel .panel-head > small { color: #77756e; font-size: 8px; }
 .campaign-lead-table-wrap { width: 100%; overflow-x: auto; }
-.campaign-lead-table { min-width: 900px; display: grid; grid-template-columns: minmax(180px, 1.2fr) 130px 165px 145px minmax(220px, 1.4fr); gap: 14px; align-items: center; }
+.campaign-lead-table { min-width: 1040px; display: grid; grid-template-columns: minmax(180px, 1.2fr) 120px 165px 145px minmax(190px, 1.2fr) 105px; gap: 14px; align-items: center; }
+.campaign-message-button,.renewal-message-button { display: inline-flex !important; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
+.renewal-message-button { width: auto !important; padding: 0 9px !important; }
 .campaign-lead-head { border-bottom: 1px solid var(--line); padding: 10px 4px; color: #9a9891; font-size: 7px; font-weight: 800; letter-spacing: .7px; text-transform: uppercase; }
 .campaign-lead-row { border-bottom: 1px solid var(--line); padding: 14px 4px; }
 .campaign-lead-row:last-child { border-bottom: 0; }

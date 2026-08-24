@@ -128,31 +128,14 @@ export function programmePhase(client: RenewalClient, now = new Date()): Program
   return 'active'
 }
 
-export function renewalOutreachAvailability(client: RenewalClient, now = new Date()) {
-  const phase = programmePhase(client, now)
+export function renewalOutreachAvailability(client: RenewalClient) {
   if (client.outreachStatus === 'do_not_contact') {
     return { available: false, reason: client.outreachStatusReason?.trim() || 'This client is marked do not contact.' }
   }
   if (client.outreachStatus === 'paused') {
     return { available: false, reason: client.outreachStatusReason?.trim() || 'This client is paused from the re-engagement campaign.' }
   }
-  if (['call_booked', 'decision_pending', 'renewed', 'declined'].includes(client.renewalStatus)) {
-    return { available: false, reason: 'Outreach stops after a renewal call is booked or the opportunity is closed.' }
-  }
-  if (phase === 'awaiting_activation') {
-    return { available: false, reason: 'Outreach begins after the client completes their first webinar.' }
-  }
-  if (phase === 'completion_overdue') {
-    return { available: false, reason: 'Completed clients are excluded from the current campaign.' }
-  }
-  if (phase !== 'renewal_window') {
-    return { available: false, reason: 'The current campaign is limited to selected active clients in their final 30 days.' }
-  }
-  const inactiveFor = daysSinceLastWebinar(client, now)
-  if (client.webinarsHosted < 1 || inactiveFor === undefined || inactiveFor >= INACTIVITY_DAYS) {
-    return { available: false, reason: 'This campaign requires recent webinar activity as well as final approval from Launch Webinars.' }
-  }
-  return { available: true, reason: 'Ready for Fred’s approved final-30-day check-in.' }
+  return { available: true, reason: 'Ready for an approved SMS through Quo.' }
 }
 
 export function recommendedRenewalOutreachKind(client: RenewalClient, now = new Date()): RenewalOutreachKind {
