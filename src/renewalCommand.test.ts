@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { daysUntilProgrammeEnd, programmeEndDate, programmePhase, recommendedRenewalAction, recommendedRenewalOutreachKind, renewalOutreachAvailability, renewalPipelineStage, renewalPipelineSummary, renewalReadiness, renewalSummary, upsellCampaignStage, upsellCampaignSummary, type RenewalClient } from './renewalCommand'
+import { inputFromRenewalClient } from './renewalCommandClient'
 
 const client = (overrides: Partial<RenewalClient> = {}): RenewalClient => ({
   id: 'renewal-1',
@@ -15,6 +16,21 @@ const client = (overrides: Partial<RenewalClient> = {}): RenewalClient => ({
 })
 
 describe('Renewal Command calculations', () => {
+  it('keeps internal campaign history out of contact edit requests', () => {
+    const item = client({
+      phone: '+15551234567',
+      outreach: [{ id: 'message-1', direction: 'outbound', channel: 'sms', kind: 'va_upsell_opener', templateKey: 'va_upsell_opener', body: 'Checking in.', deliveryStatus: 'sent', createdAt: '2026-08-01T10:00:00.000Z', createdBy: 'Yonas' }],
+      upsellCampaign: { openerSentAt: '2026-08-01T10:00:00.000Z', repliedAt: '2026-08-01T10:05:00.000Z' },
+    })
+
+    const input = inputFromRenewalClient(item)
+
+    expect(input.phone).toBe('+15551234567')
+    expect(input).not.toHaveProperty('outreach')
+    expect(input).not.toHaveProperty('upsellCampaign')
+    expect(item.upsellCampaign?.repliedAt).toBe('2026-08-01T10:05:00.000Z')
+  })
+
   it('starts the 90-day programme from the first webinar rather than the payment date', () => {
     const item = client({ enrolledAt: '2026-06-01', firstWebinarAt: '2026-07-01' })
     expect(programmeEndDate(item.firstWebinarAt)).toBe('2026-09-29')

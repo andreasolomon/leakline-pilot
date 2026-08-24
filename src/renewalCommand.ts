@@ -90,7 +90,7 @@ export type RenewalClient = {
   updatedAt: string
 }
 
-export type RenewalClientInput = Omit<RenewalClient, 'id' | 'createdAt' | 'updatedAt' | 'source' | 'clickUpTaskId' | 'clickUpStatus' | 'crmContactId' | 'outreach'>
+export type RenewalClientInput = Omit<RenewalClient, 'id' | 'createdAt' | 'updatedAt' | 'source' | 'clickUpTaskId' | 'clickUpStatus' | 'crmContactId' | 'outreach' | 'upsellCampaign'>
 export type ProgrammePhase = 'awaiting_activation' | 'active' | 'inactive' | 'renewal_window' | 'completion_overdue' | 'renewed' | 'declined'
 export type ReadinessLabel = 'High' | 'Medium' | 'Low' | 'Needs feedback' | 'Needs activity'
 
