@@ -3,6 +3,7 @@ import type { PublicUser } from './authService.js'
 import { listQuoMessages, sendHighLevelMessage, sendQuoMessage } from './providers.js'
 import type { NormalizedRow, RenewalClientRecord, RenewalOutreachActivityRecord, RenewalOutreachKind, WorkspaceRecord } from './types.js'
 import type { EncryptedStore } from './store.js'
+import { explicitSmsOptOutReason } from './safety.js'
 
 type OutreachChannel = 'sms' | 'email'
 type OutreachPreviewInput = { channel: OutreachChannel; kind: RenewalOutreachKind }
@@ -35,8 +36,7 @@ function lower(value: unknown) {
 export function renewalOptOutReason(value: unknown) {
   const message = lower(value)
   if (/\b(wrong number)\b/.test(message)) return 'The recipient reported that this is the wrong number.'
-  if (/\b(stop|unsubscribe|remove me|do not contact|don['’]?t contact)\b/.test(message)) return 'The recipient asked not to receive further messages.'
-  return undefined
+  return explicitSmsOptOutReason(message)
 }
 
 function utcDay(value: Date | string) {

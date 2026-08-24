@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import type { NormalizedRow, PaymentProviderId, PaymentRecoveryCaseRecord, PaymentRecoveryClassification, PaymentRecoveryStatus, RecoveryFollowUpRecord, RecoveryPolicyRecord, RecoveryReplyIntent, WorkspaceRecord } from './types.js'
+import { explicitSmsOptOutReason } from './safety.js'
 
 const atRiskStatuses = new Set(['failed', 'overdue', 'past due', 'past_due', 'unpaid', 'open'])
 const paidStatuses = new Set(['paid', 'succeeded', 'successful'])
@@ -44,7 +45,7 @@ export function recommendedAction(classification: PaymentRecoveryClassification,
 
 export function classifyRecoveryReply(body: string): { intent: RecoveryReplyIntent; confidence: number; recommendedAction: string; pauseRoutine: boolean } {
   const message = lower(body).replace(/<[^>]*>/g, ' ')
-  if (/\b(stop|unsubscribe|remove me|do not contact|don['’]?t contact)\b/.test(message)) return { intent: 'opt_out', confidence: 0.99, recommendedAction: 'Confirm the opt-out, stop all recovery messages and update the contact record.', pauseRoutine: true }
+  if (explicitSmsOptOutReason(message)) return { intent: 'opt_out', confidence: 0.99, recommendedAction: 'Confirm the opt-out, stop all recovery messages and update the contact record.', pauseRoutine: true }
   if (/\b(wrong (person|number|email)|not me|don['’]?t know)\b/.test(message)) return { intent: 'wrong_contact', confidence: 0.98, recommendedAction: 'Stop outreach and correct the CRM-to-payment contact match before doing anything else.', pauseRoutine: true }
   if (/\b(dispute|chargeback|refund|cancel the payment)\b/.test(message)) return { intent: 'dispute_or_refund', confidence: 0.97, recommendedAction: 'Pause routine recovery and assign this response for a personal dispute or refund review.', pauseRoutine: true }
   if (/\b(can['’]?t afford|cannot afford|hardship|lost my job|no money|financial difficulty)\b/.test(message)) return { intent: 'hardship', confidence: 0.96, recommendedAction: 'Pause routine recovery and ask an authorised person to review the available payment-term options.', pauseRoutine: true }

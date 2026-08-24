@@ -5,7 +5,7 @@ import type { PaymentRecoveryClassification, RecoveryAttemptChannel, RecoveryAtt
 import type { PaymentRecoveryRepository } from './paymentRecoveryRepository.js'
 import { promiseConfirmationDraft, refreshRecoveryWorkflow, renderRecoveryMessage } from './paymentRecovery.js'
 import { listQuoMessages, sendHighLevelRecoveryMessage, sendQuoMessage } from './providers.js'
-import { safeErrorMessage } from './safety.js'
+import { explicitSmsOptOutReason, safeErrorMessage } from './safety.js'
 
 function assertSafeOutboundMessage(body: string) {
   if (body.includes('[secure payment link unavailable]') || /\{\{[^}]+\}\}/.test(body)) throw new Error('This message still contains an unresolved placeholder. Add a verified provider-hosted payment link before sending.')
@@ -18,8 +18,7 @@ function countsAsDelivered(attempt: RecoveryAttemptRecord) {
 function smsSuppressionReason(body: string) {
   const message = body.trim().toLowerCase()
   if (/\bwrong number\b/.test(message)) return 'The recipient reported that this is the wrong number.'
-  if (/\b(stop|unsubscribe|remove me|do not contact|don['’]?t contact)\b/.test(message)) return 'The recipient asked not to receive further messages.'
-  return undefined
+  return explicitSmsOptOutReason(message)
 }
 
 export class PaymentRecoveryService {

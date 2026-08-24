@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createApp } from './app.js'
-import { buildRenewalMessage, buildRenewalReplySuggestion, RenewalOutreachService, renewalFollowUpReadiness, renewalOutreachEligibility, renewalOutreachPhase } from './renewalOutreach.js'
+import { buildRenewalMessage, buildRenewalReplySuggestion, RenewalOutreachService, renewalFollowUpReadiness, renewalOptOutReason, renewalOutreachEligibility, renewalOutreachPhase } from './renewalOutreach.js'
 import { EncryptedStore } from './store.js'
 import type { RenewalClientRecord, RenewalOutreachActivityRecord } from './types.js'
 
@@ -46,6 +46,14 @@ function renewalClient(overrides: Partial<RenewalClientRecord> = {}): RenewalCli
 }
 
 describe.sequential('assisted renewal outreach', () => {
+  it('blocks explicit SMS opt-outs without treating ordinary uses of stop as opt-outs', () => {
+    expect(renewalOptOutReason('STOP')).toMatch(/asked not to receive/i)
+    expect(renewalOptOutReason('Please stop messaging me.')).toMatch(/asked not to receive/i)
+    expect(renewalOptOutReason('Do not contact me again.')).toMatch(/asked not to receive/i)
+    expect(renewalOptOutReason('Where are you located? Next stop is a coffee farm.')).toBeUndefined()
+    expect(renewalOptOutReason("Don't stop sending the weekly coaching links.")).toBeUndefined()
+  })
+
   it('allows approved outreach at any program stage while respecting explicit suppression', () => {
     expect(renewalOutreachEligibility(renewalClient()).available).toBe(true)
     expect(renewalOutreachEligibility(renewalClient({ firstWebinarAt: undefined }))).toMatchObject({ available: true, phase: 'awaiting_activation' })

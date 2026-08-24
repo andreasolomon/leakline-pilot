@@ -155,6 +155,7 @@ describe('assisted payment recovery', () => {
     expect(classifyRecoveryReply("I can't afford this right now")).toMatchObject({ intent: 'hardship', pauseRoutine: true })
     expect(classifyRecoveryReply('I want a refund and will dispute this')).toMatchObject({ intent: 'dispute_or_refund', pauseRoutine: true })
     expect(classifyRecoveryReply('Stop messaging me')).toMatchObject({ intent: 'opt_out', pauseRoutine: true })
+    expect(classifyRecoveryReply('Our next stop is the payment provider.')).toMatchObject({ intent: 'unclear', pauseRoutine: false })
   })
 
   it('creates an editable assisted reply from an inbound response', async () => {
