@@ -233,9 +233,14 @@ const highLevelKpiSettingsSchema = z.object({
   pipelineId: z.string().trim().max(120).optional(),
   stageMappings: z.record(z.string().trim().min(1).max(120), highLevelKpiOutcomeSchema).refine((mapping) => Object.keys(mapping).length <= 100, 'Map at most 100 GoHighLevel stages.'),
 }).strict()
-const coachingAttendanceSettingsSchema = z.object({
+const coachingMeetingSeriesSchema = z.object({
   meetingId: z.string().trim().regex(/^(?:\d[ -]?){9,12}$/, 'Use the 9 to 12 digit recurring Zoom meeting ID.').transform((value) => value.replace(/\D/g, '')),
+  label: z.string().trim().min(2).max(100),
+}).strict()
+const coachingAttendanceSettingsSchema = z.object({
+  meetingSeries: z.array(coachingMeetingSeriesSchema).min(1).max(10).refine((series) => new Set(series.map((item) => item.meetingId)).size === series.length, 'Each recurring Zoom meeting ID can only be added once.'),
   minimumMinutes: z.number().int().min(1).max(180),
+  requiredSessionsPerWeek: z.number().int().min(1).max(7),
   teamEmails: z.array(z.string().trim().email().max(160).transform((value) => value.toLowerCase())).max(30),
 }).strict()
 const highLevelKpiReportQuerySchema = z.object({
@@ -764,7 +769,7 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
           renewalClients: [],
           kpiSnapshots: [],
           highLevelKpi: { settings: { stageMappings: {} }, stages: [], opportunities: [], stageEvents: [] },
-          coachingAttendance: { settings: { minimumMinutes: 15, teamEmails: [] }, sessions: [] },
+          coachingAttendance: { settings: { meetingSeries: [], minimumMinutes: 15, requiredSessionsPerWeek: 1, teamEmails: [] }, sessions: [] },
         })
         for (const user of state.users.filter((item) => item.role === 'owner')) {
           user.workspaceIds = Array.from(new Set([...(user.workspaceIds ?? []), workspaceId]))
@@ -1345,9 +1350,9 @@ export function createApp(store = new EncryptedStore(), fetcher: typeof fetch = 
           accountId: z.string().trim().min(6).max(100),
           clientId: z.string().trim().min(6).max(150),
           clientSecret: z.string().trim().min(12).max(300),
-          meetingId: z.string().trim().regex(/^(?:\d[ -]?){9,12}$/, 'Use the 9 to 12 digit recurring Zoom meeting ID.').transform((value) => value.replace(/\D/g, '')),
+          meetingSeries: z.array(coachingMeetingSeriesSchema).min(1).max(10).refine((series) => new Set(series.map((item) => item.meetingId)).size === series.length, 'Each recurring Zoom meeting ID can only be added once.'),
         }).strict().parse(request.body)
-        await service.connectZoom(activeWorkspaceId(response), { accountId: input.accountId, clientId: input.clientId, clientSecret: input.clientSecret }, input.meetingId)
+        await service.connectZoom(activeWorkspaceId(response), { accountId: input.accountId, clientId: input.clientId, clientSecret: input.clientSecret }, input.meetingSeries)
         return response.json(await service.snapshot(activeWorkspaceId(response)))
       }
       const credential = provider === 'stripe'

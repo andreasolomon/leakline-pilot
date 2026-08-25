@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import type { EncryptedStore } from './store.js'
-import type { CredentialMap, ProviderId, ProviderStatus, StoreState, WorkspaceRecord } from './types.js'
+import type { CoachingMeetingSeriesRecord, CoachingSessionRecord, CredentialMap, ProviderId, ProviderStatus, StoreState, WorkspaceRecord } from './types.js'
 import { syncClickUp, syncFathom, syncGoogleCalendar, syncHighLevel, syncStripe, syncWhop, syncZoomCoachingAttendance, validateClickUp, validateFathom, validateHighLevel, validateQuo, validateStripe, validateWhop, validateZoom } from './providers.js'
 import { safeErrorMessage } from './safety.js'
 import { sandboxSync } from './sandbox.js'
@@ -72,13 +72,14 @@ export class IntegrationService {
     return validation
   }
 
-  async connectZoom(workspaceId: string, credential: CredentialMap['zoom'], meetingId: string) {
-    const validation = await validateZoom(credential, this.fetcher, meetingId)
+  async connectZoom(workspaceId: string, credential: CredentialMap['zoom'], meetingSeries: CoachingMeetingSeriesRecord[]) {
+    const validation = await validateZoom(credential, this.fetcher, meetingSeries.map((series) => series.meetingId))
     await this.store.update((state) => {
       const workspace = this.getWorkspace(state, workspaceId)
       workspace.credentials.zoom = credential
       workspace.connections.zoom = { connectedAt: new Date().toISOString(), accountLabel: validation.accountLabel, recordCounts: {}, mode: 'live' }
-      workspace.coachingAttendance.settings.meetingId = meetingId.replace(/\D/g, '')
+      workspace.coachingAttendance.settings.meetingSeries = meetingSeries.map((series) => ({ ...series, meetingId: series.meetingId.replace(/\D/g, '') }))
+      delete workspace.coachingAttendance.settings.meetingId
     })
     return validation
   }
@@ -150,9 +151,10 @@ export class IntegrationService {
         const result = await syncGoogleCalendar(credential as CredentialMap['google-calendar'], config.clientId, config.clientSecret, this.fetcher)
         await this.store.update((next) => { const target = this.getWorkspace(next, workspaceId); target.credentials['google-calendar'] = result.credential; target.workspace.appointments = result.appointments; this.markSynced(target, provider, { appointments: result.appointments.rows.length }) })
       } else if (provider === 'zoom') {
-        const meetingId = workspace.coachingAttendance.settings.meetingId
-        if (!meetingId) throw new Error('Add the recurring Zoom meeting ID before syncing coaching attendance.')
-        const sessions = await syncZoomCoachingAttendance(credential as CredentialMap['zoom'], meetingId, this.fetcher)
+        const meetingSeries = workspace.coachingAttendance.settings.meetingSeries
+        if (!meetingSeries.length) throw new Error('Add at least one recurring Zoom meeting before syncing coaching attendance.')
+        const sessions: CoachingSessionRecord[] = []
+        for (const series of meetingSeries) sessions.push(...await syncZoomCoachingAttendance(credential as CredentialMap['zoom'], series.meetingId, this.fetcher, series.label))
         await this.store.update((next) => {
           const target = this.getWorkspace(next, workspaceId)
           const byId = new Map(target.coachingAttendance.sessions.map((session) => [session.id, session]))

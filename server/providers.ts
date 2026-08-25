@@ -570,11 +570,11 @@ async function zoomAccessToken(credential: ZoomCredential, fetcher: Fetcher) {
 
 const zoomHeaders = (accessToken: string) => ({ Authorization: `Bearer ${accessToken}` })
 
-export async function validateZoom(credential: ZoomCredential, fetcher: Fetcher = fetch, meetingId?: string) {
+export async function validateZoom(credential: ZoomCredential, fetcher: Fetcher = fetch, meetingIds?: string | string[]) {
   const accessToken = await zoomAccessToken(credential, fetcher)
-  const cleanMeetingId = meetingId?.replace(/\D/g, '')
-  if (cleanMeetingId) await jsonRequest(`https://api.zoom.us/v2/past_meetings/${encodeURIComponent(cleanMeetingId)}/instances`, { headers: zoomHeaders(accessToken) }, fetcher)
-  return { accountLabel: cleanMeetingId ? `Zoom coaching meeting · ${cleanMeetingId.slice(-4)}` : 'Zoom account' }
+  const cleanMeetingIds = (Array.isArray(meetingIds) ? meetingIds : meetingIds ? [meetingIds] : []).map((meetingId) => meetingId.replace(/\D/g, ''))
+  for (const meetingId of cleanMeetingIds) await jsonRequest(`https://api.zoom.us/v2/past_meetings/${encodeURIComponent(meetingId)}/instances`, { headers: zoomHeaders(accessToken) }, fetcher)
+  return { accountLabel: cleanMeetingIds.length ? `${cleanMeetingIds.length} Zoom coaching series` : 'Zoom account' }
 }
 
 function zoomMeetingUuid(uuid: string) {
@@ -582,7 +582,7 @@ function zoomMeetingUuid(uuid: string) {
   return uuid.startsWith('/') || uuid.includes('//') ? encodeURIComponent(encoded) : encoded
 }
 
-export async function syncZoomCoachingAttendance(credential: ZoomCredential, meetingId: string, fetcher: Fetcher = fetch): Promise<CoachingSessionRecord[]> {
+export async function syncZoomCoachingAttendance(credential: ZoomCredential, meetingId: string, fetcher: Fetcher = fetch, topic = 'Coaching call'): Promise<CoachingSessionRecord[]> {
   const accessToken = await zoomAccessToken(credential, fetcher)
   const headers = zoomHeaders(accessToken)
   const cleanMeetingId = meetingId.replace(/\D/g, '')
@@ -611,9 +611,9 @@ export async function syncZoomCoachingAttendance(credential: ZoomCredential, mee
       if (!nextPageToken) break
     }
     sessions.push({
-      id: instance.uuid,
+      id: `${cleanMeetingId}:${instance.uuid}`,
       meetingId: cleanMeetingId,
-      topic: 'Launch Webinars coaching call',
+      topic,
       startedAt: instance.start_time,
       participants,
       syncedAt: new Date().toISOString(),

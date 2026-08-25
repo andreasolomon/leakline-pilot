@@ -95,11 +95,18 @@ export type WorkspaceIntegrationState = {
 }
 
 export type CoachingAttendanceSettingsRecord = {
+  meetingSeries: CoachingMeetingSeriesRecord[]
   meetingId?: string
   minimumMinutes: number
+  requiredSessionsPerWeek: number
   teamEmails: string[]
   updatedAt?: string
   updatedBy?: string
+}
+
+export type CoachingMeetingSeriesRecord = {
+  meetingId: string
+  label: string
 }
 
 export type CoachingParticipantRecord = {

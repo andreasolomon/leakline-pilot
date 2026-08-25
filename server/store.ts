@@ -51,7 +51,7 @@ const emptyHighLevelKpiState = (): WorkspaceIntegrationState['highLevelKpi'] => 
 })
 
 const emptyCoachingAttendanceState = (): WorkspaceIntegrationState['coachingAttendance'] => ({
-  settings: { minimumMinutes: 15, teamEmails: [] },
+  settings: { meetingSeries: [], minimumMinutes: 15, requiredSessionsPerWeek: 1, teamEmails: [] },
   sessions: [],
 })
 
@@ -158,6 +158,12 @@ function normaliseState(input: Partial<StoreState>): StoreState {
       settings: {
         ...emptyCoachingAttendanceState().settings,
         ...(workspace.coachingAttendance?.settings ?? {}),
+        meetingSeries: workspace.coachingAttendance?.settings?.meetingSeries?.length
+          ? workspace.coachingAttendance.settings.meetingSeries
+          : workspace.coachingAttendance?.settings?.meetingId
+            ? [{ meetingId: workspace.coachingAttendance.settings.meetingId.replace(/\D/g, ''), label: 'Coaching call' }]
+            : [],
+        requiredSessionsPerWeek: workspace.coachingAttendance?.settings?.requiredSessionsPerWeek ?? 1,
         teamEmails: workspace.coachingAttendance?.settings?.teamEmails ?? [],
       },
       sessions: (workspace.coachingAttendance?.sessions ?? []).map((session) => ({

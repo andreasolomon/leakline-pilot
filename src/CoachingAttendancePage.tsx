@@ -1,11 +1,12 @@
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CalendarCheck, CheckCircle2, Clock3, Link2, RefreshCw, Users } from 'lucide-react'
+import { formatZoomMeetingSeries, parseZoomMeetingSeries, type ZoomMeetingSeries } from './zoomMeetingSeries'
 
-type CoachingSettings = { meetingId?: string; minimumMinutes: number; teamEmails: string[] }
+type CoachingSettings = { meetingSeries: ZoomMeetingSeries[]; minimumMinutes: number; requiredSessionsPerWeek: number; teamEmails: string[] }
 type CoachingParticipant = { id: string; name: string; email?: string; durationMinutes: number; matchType: 'email' | 'name' | 'unmatched' | 'team'; matchedClientId?: string }
 type CoachingSession = { id: string; topic: string; startedAt: string; participants: CoachingParticipant[] }
-type CoachingClient = { clientId: string; name: string; email?: string; owner: string; sessionsAvailable: number; attended: number; missed: number; attendanceRate: number; lastAttendedAt?: string; consecutiveMisses: number }
-type CoachingReport = { connected: boolean; settings: CoachingSettings; sessions: CoachingSession[]; clients: CoachingClient[]; unmatched: Array<CoachingParticipant & { sessionId: string; sessionStartedAt: string }> }
+type CoachingClient = { clientId: string; name: string; email?: string; owner: string; sessionsAvailable: number; weeksAvailable: number; attended: number; missed: number; attendanceRate: number; lastAttendedAt?: string; consecutiveMisses: number }
+type CoachingReport = { connected: boolean; settings: CoachingSettings; attendanceRule: string; sessions: CoachingSession[]; clients: CoachingClient[]; unmatched: Array<CoachingParticipant & { sessionId: string; sessionStartedAt: string }> }
 
 async function coachingApi<T>(path = '/api/coaching-attendance', init?: RequestInit): Promise<T> {
   const response = await fetch(path, { ...init, headers: { 'Content-Type': 'application/json', ...init?.headers } })
@@ -18,7 +19,7 @@ const formatDate = (value?: string) => value ? new Date(value).toLocaleDateStrin
 
 export default function CoachingAttendancePage({ canAct, onOpenDataSources }: { canAct: boolean; onOpenDataSources: () => void }) {
   const [report, setReport] = useState<CoachingReport | null>(null)
-  const [meetingId, setMeetingId] = useState('')
+  const [meetingSeries, setMeetingSeries] = useState('')
   const [minimumMinutes, setMinimumMinutes] = useState(15)
   const [teamEmails, setTeamEmails] = useState('')
   const [busy, setBusy] = useState('loading')
@@ -30,7 +31,7 @@ export default function CoachingAttendancePage({ canAct, onOpenDataSources }: { 
     try {
       const next = await coachingApi<CoachingReport>()
       setReport(next)
-      setMeetingId(next.settings.meetingId ?? '')
+      setMeetingSeries(formatZoomMeetingSeries(next.settings.meetingSeries))
       setMinimumMinutes(next.settings.minimumMinutes)
       setTeamEmails(next.settings.teamEmails.join(', '))
     } catch (requestError) {
@@ -48,7 +49,7 @@ export default function CoachingAttendancePage({ canAct, onOpenDataSources }: { 
     try {
       const next = await coachingApi<CoachingReport>('/api/coaching-attendance/settings', {
         method: 'PATCH',
-        body: JSON.stringify({ meetingId, minimumMinutes, teamEmails: teamEmails.split(',').map((email) => email.trim()).filter(Boolean) }),
+        body: JSON.stringify({ meetingSeries: parseZoomMeetingSeries(meetingSeries), minimumMinutes, requiredSessionsPerWeek: 1, teamEmails: teamEmails.split(',').map((email) => email.trim()).filter(Boolean) }),
       })
       setReport(next)
       setNotice('Coaching attendance rules saved.')
@@ -83,20 +84,20 @@ export default function CoachingAttendancePage({ canAct, onOpenDataSources }: { 
     <div className="coaching-metrics">
       <article><span>Sessions synced</span><strong>{report?.sessions.length ?? 0}</strong><small>Completed Zoom occurrences</small></article>
       <article><span>Clients tracked</span><strong>{trackedClients.length}</strong><small>Clients with eligible sessions</small></article>
-      <article><span>Attendance rate</span><strong>{overallRate}%</strong><small>Across eligible client sessions</small></article>
+      <article><span>Weekly attendance</span><strong>{overallRate}%</strong><small>{report?.attendanceRule ?? 'One qualifying call per week'}</small></article>
       <article><span>Needs matching</span><strong>{report?.unmatched.length ?? 0}</strong><small>Zoom attendees requiring review</small></article>
     </div>
 
     <div className="coaching-layout">
       <section className="panel coaching-client-panel">
         <div className="coaching-panel-heading"><div><span>Client-level view</span><h2>Attendance by client</h2></div><Users size={20} /></div>
-        {!report || busy === 'loading' ? <div className="integration-loading"><RefreshCw size={20} className="spin" /> Loading coaching attendance...</div> : !trackedClients.length ? <div className="coaching-empty"><CalendarCheck size={28} /><strong>No attendance has been matched yet</strong><span>Connect Zoom, save the recurring meeting ID and sync completed calls.</span></div> : <div className="coaching-table"><div className="coaching-table-head"><span>Client</span><span>Attended</span><span>Missed</span><span>Rate</span><span>Last attended</span></div>{trackedClients.map((client) => <div className={client.consecutiveMisses >= 2 ? 'attention' : ''} key={client.clientId}><span><strong>{client.name}</strong><small>{client.owner}</small></span><span>{client.attended}/{client.sessionsAvailable}</span><span>{client.missed}{client.consecutiveMisses >= 2 && <small>{client.consecutiveMisses} consecutive</small>}</span><span><em>{client.attendanceRate}%</em></span><span>{formatDate(client.lastAttendedAt)}</span></div>)}</div>}
+        {!report || busy === 'loading' ? <div className="integration-loading"><RefreshCw size={20} className="spin" /> Loading coaching attendance...</div> : !trackedClients.length ? <div className="coaching-empty"><CalendarCheck size={28} /><strong>No attendance has been matched yet</strong><span>Connect Zoom, save the recurring meeting links and sync completed calls.</span></div> : <div className="coaching-table"><div className="coaching-table-head"><span>Client</span><span>Weeks attended</span><span>Weeks missed</span><span>Rate</span><span>Last attended</span></div>{trackedClients.map((client) => <div className={client.consecutiveMisses >= 2 ? 'attention' : ''} key={client.clientId}><span><strong>{client.name}</strong><small>{client.owner}</small></span><span>{client.attended}/{client.weeksAvailable}</span><span>{client.missed}{client.consecutiveMisses >= 2 && <small>{client.consecutiveMisses} consecutive</small>}</span><span><em>{client.attendanceRate}%</em></span><span>{formatDate(client.lastAttendedAt)}</span></div>)}</div>}
       </section>
 
       <aside className="panel coaching-settings-panel">
         <div className="coaching-panel-heading"><div><span>Tracking rules</span><h2>Zoom coaching series</h2></div><Clock3 size={20} /></div>
         <form onSubmit={saveSettings}>
-          <label>Recurring meeting ID<input inputMode="numeric" value={meetingId} onChange={(event) => setMeetingId(event.target.value)} placeholder="123 456 7890" /><small>Use the number from the recurring Zoom link.</small></label>
+          <label>Recurring coaching meetings<textarea rows={5} value={meetingSeries} onChange={(event) => setMeetingSeries(event.target.value)} placeholder={'Fred coaching calls | 82769043003\nYonas Friday coaching | 86912599864'} /><small>Add one labelled Zoom meeting link or ID per line. Attendance at any listed call can satisfy the weekly requirement.</small></label>
           <label>Minimum attendance<input type="number" min="1" max="180" value={minimumMinutes} onChange={(event) => setMinimumMinutes(Number(event.target.value))} /><small>A client counts as attending after this many total minutes.</small></label>
           <label>Team emails<textarea rows={3} value={teamEmails} onChange={(event) => setTeamEmails(event.target.value)} placeholder="fred@launchwebinars.io, yonas@launchwebinars.io" /><small>Comma-separated staff emails are excluded from client attendance.</small></label>
           <button className="secondary-button" disabled={!canAct || busy === 'settings'}>{busy === 'settings' ? <RefreshCw size={14} className="spin" /> : <CheckCircle2 size={14} />} Save tracking rules</button>
